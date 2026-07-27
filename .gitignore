@@ -1,0 +1,77 @@
+# ---- Dependencies ----
+node_modules/
+.pnpm-store/
+
+# ---- Build Output ----
+dist/
+dist-ssr/
+*.local
+
+# ---- IDE / Editor ----
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Dev-Only Docs (local only) ----
+docs/
+
+# ---- Agent Customizations (local only) ----
+.github/copilot-instructions.md
+.github/agents/
+
+# ---- OS Files ----
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+
+# ---- Environment / Secrets ----
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ---- Logs ----
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---- TypeScript ----
+*.tsbuildinfo
+
+# ---- Test ----
+coverage/
+.nyc_output/
+
+# ---- Package Manager ----
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.pnpm-debug.log*
+
+# ---- Misc ----
+*.tgz
+.cache/
+temp/
+tmp/
