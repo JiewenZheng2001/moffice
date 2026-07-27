@@ -1,0 +1,32 @@
+:root {
+  /* 主题色 */
+  --color-primary: #18a058;
+  --color-primary-hover: #36ad6a;
+
+  /* 表格颜色 */
+  --grid-bg: #ffffff;
+  --grid-header-bg: #f5f5f5;
+  --grid-header-border: #d9d9d9;
+  --grid-cell-border: #e8e8e8;
+  --grid-selection-bg: #d9f0e5;
+  --grid-selection-border: #18a058;
+  --grid-active-cell-bg: #ffffff;
+  --grid-active-cell-border: #18a058;
+  --grid-row-hover-bg: #f0faf5;
+
+  /* 文字 */
+  --text-primary: #333333;
+  --text-secondary: #666666;
+  --text-disabled: #999999;
+
+  /* 间距 */
+  --cell-padding: 4px 8px;
+  --toolbar-height: 40px;
+  --formula-bar-height: 32px;
+  --sheet-tab-height: 32px;
+  --status-bar-height: 24px;
+  --row-header-width: 48px;
+  --column-header-height: 24px;
+  --default-cell-width: 100px;
+  --default-cell-height: 24px;
+}

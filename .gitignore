@@ -18,6 +18,11 @@ dist-ssr/
 *.swp
 *.swo
 *~
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # ---- Dev-Only Docs (local only) ----
 docs/
@@ -56,6 +61,7 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+lerna-debug.log*
 
 # ---- TypeScript ----
 *.tsbuildinfo
@@ -75,3 +81,4 @@ pnpm-lock.yaml
 .cache/
 temp/
 tmp/
+
