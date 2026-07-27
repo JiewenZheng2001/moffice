@@ -9,11 +9,7 @@ dist-ssr/
 
 # ---- IDE / Editor ----
 .vs/
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
+.vscode/
 .idea/
 *.swp
 *.swo
