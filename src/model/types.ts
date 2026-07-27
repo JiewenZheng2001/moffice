@@ -58,6 +58,7 @@ export interface Cell {
 export interface Sheet {
   id: string
   name: string
+  /** 稀疏存储：只存有内容的单元格 */
   cells: Map<CellRef, Cell>
   rowCount: number
   columnCount: number

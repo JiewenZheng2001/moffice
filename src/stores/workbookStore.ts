@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Workbook, Sheet } from '@/model/types'
+import type { Workbook, Sheet, CellRef, CellValue } from '@/model/types'
+import { createCell } from '@/model/cell'
 
 /**
  * 工作簿 Store —— 持有 Workbook 数据模型
@@ -43,6 +44,33 @@ export const useWorkbookStore = defineStore('workbook', () => {
     workbook.value.activeSheetId = sheetId
   }
 
+  /**
+   * 设置单元格值
+   * 替换整个 cells 对象以确保 Vue 响应式触发
+   */
+  function setCellValue(ref: CellRef, value: CellValue): void {
+    const sheet = activeSheet.value
+    if (!sheet) return
+
+    if (value === null || value === '') {
+      sheet.cells.delete(ref)
+      return
+    }
+
+    const existing = sheet.cells.get(ref)
+    if (existing) {
+      existing.rawValue = value
+      existing.computedValue = value
+      existing.formula = null
+      existing.error = null
+    } else {
+      const cell = createCell(ref)
+      cell.rawValue = value
+      cell.computedValue = value
+      sheet.cells.set(ref, cell)
+    }
+  }
+
   // 确保始终有一个默认 Sheet
   if (workbook.value.sheets.length === 0) {
     addSheet('Sheet1')
@@ -53,5 +81,6 @@ export const useWorkbookStore = defineStore('workbook', () => {
     activeSheet,
     addSheet,
     setActiveSheet,
+    setCellValue,
   }
 })
