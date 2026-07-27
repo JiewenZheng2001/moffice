@@ -1,5 +1,6 @@
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, type Ref } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
+import { useWorkbookStore } from '@/stores/workbookStore'
 import { colToIndex, toCellRef } from '@/utils/columnUtils'
 
 /**
@@ -14,19 +15,52 @@ function parseCellRef(ref: string): { row: number; col: number } | null {
   return { row, col }
 }
 
+const ROW_H = 24
+const COL_W = 100
+const COL_HEADER_H = 24  // <thead> 高度，cellTop 计算必须加上
+const ROW_HEADER_W = 48
+const JUMP_ROWS = 5
+const JUMP_COLS = 1
+
 /**
  * 键盘导航 composable
- * 统一管理所有表格快捷键，按 spec 中的快捷键映射表实现
- *
- * 快捷键映射：
- *   Arrow     → 方向键移动选区
- *   Tab       → 右移一个单元格
- *   Enter     → 若编辑中则确认，否则下移一个单元格
- *   F2        → 编辑当前单元格
- *   Esc       → 取消编辑
+ * 统一管理所有表格快捷键。
+ * 核心：方向键移动前先判断目标格是否完整可见，
+ * 若不可见则先滚动视图再移动选区，确保格子从不"出界闪现"。
  */
-export function useKeyboard(): void {
+export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
   const uiStore = useUiStore()
+  const workbookStore = useWorkbookStore()
+
+  /** 先滚动确保目标行列在视口内完整可见 */
+  function ensureVisible(row: number, col: number): void {
+    const el = scrollContainer.value
+    if (!el) return
+
+    // ---- 垂直（cellTop 必须加 COL_HEADER_H，因为 <thead> 占 24px） ----
+    const cellTop = COL_HEADER_H + row * ROW_H
+    const cellBottom = cellTop + ROW_H
+    const vpTop = el.scrollTop
+    const vpBottom = vpTop + el.clientHeight
+
+    if (cellTop < vpTop) {
+      el.scrollTop = Math.max(0, cellTop - JUMP_ROWS * ROW_H - 1)  // -1 防亚像素贴边
+    } else if (cellBottom > vpBottom) {
+      el.scrollTop = cellTop - el.clientHeight + ROW_H + JUMP_ROWS * ROW_H + 1  // +1 缓冲
+    }
+
+    // ---- 水平 ----
+    const cellLeft = col * COL_W + ROW_HEADER_W
+    const cellRight = cellLeft + COL_W
+    const vpLeft = el.scrollLeft
+    const vpRight = vpLeft + el.clientWidth
+
+    if (cellLeft < vpLeft) {
+      el.scrollLeft = Math.max(0, cellLeft - JUMP_COLS * COL_W - 1)
+    } else if (cellRight > vpRight) {
+      el.scrollLeft = cellLeft - el.clientWidth + COL_W + JUMP_COLS * COL_W + 1
+    }
+  }
 
   function handleKeydown(e: KeyboardEvent): void {
     // 如果事件来自输入框（编辑中），不处理 — 让 input 自己的 handler 处理
@@ -97,11 +131,13 @@ export function useKeyboard(): void {
     }
   }
 
-  /** 移动选区到指定行列 */
+  /** 先滚动再移动选区 —— 格子永远不会出现"出界闪现" */
   function navigateTo(row: number, col: number): void {
-    if (col < 0 || row < 0) return
-    const ref = toCellRef(row, col)
-    uiStore.selectCell(ref)
+    const sheet = workbookStore.activeSheet
+    if (!sheet) return
+    if (col < 0 || row < 0 || col >= sheet.columnCount || row >= sheet.rowCount) return
+    ensureVisible(row, col)
+    uiStore.selectCell(toCellRef(row, col))
   }
 
   onMounted(() => {

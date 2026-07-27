@@ -3,9 +3,10 @@ import SpreadsheetGrid from './grid/SpreadsheetGrid.vue'
 import FormulaBar from './formula-bar/FormulaBar.vue'
 import SheetTabs from './sheet-tabs/SheetTabs.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
+import { gridScrollRef } from '@/composables/useGridScrollRef'
 
-// 激活全局键盘导航（方向键/Tab/Enter/F2/Esc）
-useKeyboard()
+// 激活全局键盘导航（方向键/Tab/Enter/F2/Esc）+ 预滚动
+useKeyboard(gridScrollRef)
 </script>
 
 <template>

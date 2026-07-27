@@ -71,6 +71,14 @@ export const useWorkbookStore = defineStore('workbook', () => {
     }
   }
 
+  /** 手动添加指定数量的行 */
+  function addRows(count: number): void {
+    const sheet = activeSheet.value
+    if (sheet && count > 0) {
+      sheet.rowCount += count
+    }
+  }
+
   // 确保始终有一个默认 Sheet
   if (workbook.value.sheets.length === 0) {
     addSheet('Sheet1')
@@ -82,5 +90,6 @@ export const useWorkbookStore = defineStore('workbook', () => {
     addSheet,
     setActiveSheet,
     setCellValue,
+    addRows,
   }
 })
