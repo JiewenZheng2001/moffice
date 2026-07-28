@@ -13,9 +13,7 @@
     "typecheck": "vue-tsc -b --noEmit"
   },
   "dependencies": {
-    "@vicons/ionicons5": "^0.13.0",
     "exceljs": "^4.4.0",
-    "naive-ui": "^2.44.1",
     "papaparse": "^5.5.4",
     "pinia": "^4.0.2",
     "vue": "^3.5.39"

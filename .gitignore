@@ -22,6 +22,7 @@ dist-ssr/
 
 # ---- Dev-Only Docs (local only) ----
 docs/
+ROADMAP.md
 
 # ---- Agent Customizations (local only) ----
 .github/copilot-instructions.md

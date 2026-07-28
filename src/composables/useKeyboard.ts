@@ -16,10 +16,6 @@ function parseCellRef(ref: string): { row: number; col: number } | null {
   return { row, col }
 }
 
-const ROW_H = 24
-const COL_W = 100
-const COL_HEADER_H = 24  // <thead> 高度，cellTop 计算必须加上
-const ROW_HEADER_W = 48
 const JUMP_ROWS = 5
 const JUMP_COLS = 1
 
@@ -37,29 +33,43 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
   function ensureVisible(row: number, col: number): void {
     const el = scrollContainer.value
     if (!el) return
+    const sheet = workbookStore.activeSheet
+    if (!sheet) return
 
-    // ---- 垂直（cellTop 必须加 COL_HEADER_H，因为 <thead> 占 24px） ----
-    const cellTop = COL_HEADER_H + row * ROW_H
-    const cellBottom = cellTop + ROW_H
+    // ---- 垂直：按实际行高累加 ----
+    const DEFAULT_ROW_H = 24
+    const COL_HEADER_H = 24
+    let cellTop = COL_HEADER_H
+    for (let r = 0; r < row; r++) {
+      cellTop += sheet.rowHeights.get(r) ?? DEFAULT_ROW_H
+    }
+    const cellHeight = sheet.rowHeights.get(row) ?? DEFAULT_ROW_H
+    const cellBottom = cellTop + cellHeight
     const vpTop = el.scrollTop
     const vpBottom = vpTop + el.clientHeight
 
     if (cellTop < vpTop) {
-      el.scrollTop = Math.max(0, cellTop - JUMP_ROWS * ROW_H - 1)  // -1 防亚像素贴边
+      el.scrollTop = Math.max(0, cellTop - JUMP_ROWS * DEFAULT_ROW_H - 1)
     } else if (cellBottom > vpBottom) {
-      el.scrollTop = cellTop - el.clientHeight + ROW_H + JUMP_ROWS * ROW_H + 1  // +1 缓冲
+      el.scrollTop = cellTop - el.clientHeight + cellHeight + JUMP_ROWS * DEFAULT_ROW_H + 1
     }
 
-    // ---- 水平 ----
-    const cellLeft = col * COL_W + ROW_HEADER_W
-    const cellRight = cellLeft + COL_W
+    // ---- 水平：按实际列宽累加 ----
+    const DEFAULT_COL_W = 100
+    const ROW_HEADER_W = 48
+    let cellLeft = ROW_HEADER_W
+    for (let c = 0; c < col; c++) {
+      cellLeft += sheet.columnWidths.get(c) ?? DEFAULT_COL_W
+    }
+    const cellWidth = sheet.columnWidths.get(col) ?? DEFAULT_COL_W
+    const cellRight = cellLeft + cellWidth
     const vpLeft = el.scrollLeft
     const vpRight = vpLeft + el.clientWidth
 
     if (cellLeft < vpLeft) {
-      el.scrollLeft = Math.max(0, cellLeft - JUMP_COLS * COL_W - 1)
+      el.scrollLeft = Math.max(0, cellLeft - JUMP_COLS * DEFAULT_COL_W - 1)
     } else if (cellRight > vpRight) {
-      el.scrollLeft = cellLeft - el.clientWidth + COL_W + JUMP_COLS * COL_W + 1
+      el.scrollLeft = cellLeft - el.clientWidth + cellWidth + JUMP_COLS * DEFAULT_COL_W + 1
     }
   }
 

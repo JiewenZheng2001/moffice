@@ -75,6 +75,12 @@ async function handleCellDblClick(row: number, col: number): Promise<void> {
   input?.focus()
 }
 
+/** 单元格鼠标按下：先保存当前编辑，再开始选区 */
+function onCellMouseDown(row: number, col: number): void {
+  saveCurrentEdit()
+  uiStore.startRangeSelection(toCellRef(row, col))
+}
+
 /** 确认编辑 → 保存值，关闭编辑器并下移一行 */
 function confirmEditAndMoveDown(): void {
   const ref = editCellRef.value
@@ -166,6 +172,16 @@ onUnmounted(() => {
 })
 
 
+/** 获取指定列的实际宽度（优先取自定义宽度） */
+function getColWidth(colIndex: number): number {
+  return sheet.value?.columnWidths.get(colIndex) ?? 100
+}
+
+/** 获取指定行的实际高度（优先取自定义高度） */
+function getRowHeight(rowIndex: number): number {
+  return sheet.value?.rowHeights.get(rowIndex) ?? 24
+}
+
 function isSelected(row: number, col: number): boolean {
   return uiStore.isInSelection(toCellRef(row, col))
 }
@@ -209,56 +225,6 @@ watch(
   },
 )
 
-/** 选区变化时保证目标格完整可见（鼠标点击等非键盘操作依赖此 watch） */
-watch(
-  () => uiStore.activeRef,
-  (ref) => {
-    if (!ref) return
-    // 滚动前取消拖拽，防止 scroll 导致 mouseenter 误触发 extendSelection
-    uiStore.finishSelection()
-    const match = ref.match(/^([A-Z]+)(\d+)$/i)
-    if (!match) return
-    const col = colToIndex(match[1].toUpperCase())
-    const row = parseInt(match[2], 10) - 1
-
-    void nextTick(() => {
-      const el = scrollContainer.value
-      if (!el) return
-
-      const ROW_H = 24
-      const COL_W = 100
-      const COL_HEADER_H = 24  // <thead> 高度
-      const ROW_HEADER_W = 48
-      const JUMP_ROWS = 5
-      const JUMP_COLS = 1
-
-      // ---- 垂直（cellTop 必须加 COL_HEADER_H） ----
-      const cellTop = COL_HEADER_H + row * ROW_H
-      const cellBottom = cellTop + ROW_H
-      const vpTop = el.scrollTop
-      const vpBottom = vpTop + el.clientHeight
-
-      if (cellTop < vpTop) {
-        el.scrollTop = Math.max(0, cellTop - JUMP_ROWS * ROW_H - 1)
-      } else if (cellBottom > vpBottom) {
-        el.scrollTop = cellTop - el.clientHeight + ROW_H + JUMP_ROWS * ROW_H + 1
-      }
-
-      // ---- 水平 ----
-      const cellLeft = col * COL_W + ROW_HEADER_W
-      const cellRight = cellLeft + COL_W
-      const vpLeft = el.scrollLeft
-      const vpRight = vpLeft + el.clientWidth
-
-      if (cellLeft < vpLeft) {
-        el.scrollLeft = Math.max(0, cellLeft - JUMP_COLS * COL_W - 1)
-      } else if (cellRight > vpRight) {
-        el.scrollLeft = cellLeft - el.clientWidth + COL_W + JUMP_COLS * COL_W + 1
-      }
-    })
-  },
-  { flush: 'post' },
-)
 </script>
 
 <template>
@@ -267,7 +233,7 @@ watch(
       <thead>
         <tr>
           <th class="corner" />
-          <th v-for="label in columnLabels" :key="label" class="col-header" :class="{ 'col-header--active': colToIndex(label) === activeColIndex }">
+          <th v-for="label in columnLabels" :key="label" class="col-header" :class="{ 'col-header--active': colToIndex(label) === activeColIndex }" :style="{ width: getColWidth(colToIndex(label)) + 'px', minWidth: getColWidth(colToIndex(label)) + 'px' }">
             {{ label }}
             <div
               class="col-resize-handle"
@@ -280,7 +246,7 @@ watch(
         <!-- 上方占位 spacer -->
         <tr v-if="offsetY > 0" :style="{ height: offsetY + 'px' }" />
         <tr v-for="row in visibleRows" :key="row.index">
-          <td class="row-header" :class="{ 'row-header--active': row.index === activeRowIndex }">
+          <td class="row-header" :class="{ 'row-header--active': row.index === activeRowIndex }" :style="{ height: getRowHeight(row.index) + 'px' }">
             {{ row.number }}
             <div
               class="row-resize-handle"
@@ -291,11 +257,12 @@ watch(
             v-for="colIdx in colCount"
             :key="colIdx"
             class="cell"
+            :style="{ width: getColWidth(colIdx - 1) + 'px', minWidth: getColWidth(colIdx - 1) + 'px' }"
             :class="{
               'cell--selected': isSelected(row.index, colIdx - 1),
               'cell--active': isActive(row.index, colIdx - 1),
             }"
-            @mousedown.prevent="uiStore.startRangeSelection(toCellRef(row.index, colIdx - 1))"
+            @mousedown.prevent="onCellMouseDown(row.index, colIdx - 1)"
             @mouseenter="if (uiStore.isDragging) { uiStore.extendSelection(toCellRef(row.index, colIdx - 1)); }"
             @dblclick="handleCellDblClick(row.index, colIdx - 1)"
             @contextmenu.prevent="onCellContextMenu($event, row.index, colIdx - 1)"
@@ -347,7 +314,9 @@ watch(
 }
 
 .grid-table {
-  border-collapse: collapse;
+  /* separate 模式让 box-shadow 在 <td> 上正常渲染（collapse 有 Chromium bug） */
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
   min-width: 100%;
 }
@@ -406,7 +375,7 @@ watch(
   opacity: 0.3;
 }
 
-/* 行号 */
+/* 行号（sticky 左冻结，同时为 resize 手柄提供定位容器） */
 .row-header {
   position: sticky;
   left: 0;
@@ -422,7 +391,6 @@ watch(
   text-align: center;
   user-select: none;
   transition: background 0.1s;
-  position: relative;
 }
 
 .row-header--active {
@@ -471,10 +439,10 @@ watch(
   background: var(--grid-selection-bg);
 }
 
-/* 当前激活格（深色边框） */
+/* 当前激活格（separate 模式下 box-shadow 可正常渲染，不参与 z-index 穿透） */
 .cell--active {
-  outline: 2px solid var(--grid-active-cell-border);
-  outline-offset: -2px;
+  position: relative;
+  box-shadow: 0 0 0 2px var(--grid-active-cell-border);
   z-index: 0;
 }
 
