@@ -2,6 +2,7 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { colToIndex, toCellRef } from '@/utils/columnUtils'
+import { copySelection, cutSelection, readClipboardForPaste, computePasteCells } from '@/services/clipboardService'
 
 /**
  * 从单元格引用字符串解析出行列索引
@@ -63,6 +64,30 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
   }
 
   function handleKeydown(e: KeyboardEvent): void {
+    // ---- 剪贴板快捷键（编辑模式和非编辑模式均生效） ----
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      const sheet = workbookStore.activeSheet
+      if (!sheet) return
+
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault()
+        const range = uiStore.getSelectionRange()
+        copySelection(sheet, range.startRef, range.endRef)
+        return
+      }
+      if (e.key === 'x' || e.key === 'X') {
+        e.preventDefault()
+        const range = uiStore.getSelectionRange()
+        cutSelection(sheet, range.startRef, range.endRef)
+        return
+      }
+      if (e.key === 'v' || e.key === 'V') {
+        e.preventDefault()
+        handlePaste()
+        return
+      }
+    }
+
     // 如果事件来自输入框（编辑中），不处理 — 让 input 自己的 handler 处理
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return
 
@@ -129,6 +154,17 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
           break
       }
     }
+  }
+
+  /** 粘贴：从剪贴板读取 → 计算映射 → 批量写入 */
+  async function handlePaste(): Promise<void> {
+    const sheet = workbookStore.activeSheet
+    if (!sheet) return
+    const active = uiStore.activeRef
+    const data = await readClipboardForPaste()
+    if (data.length === 0) return
+    const cells = computePasteCells(sheet, active, data)
+    workbookStore.pasteCells(cells)
   }
 
   /** 先滚动再移动选区 —— 格子永远不会出现"出界闪现" */

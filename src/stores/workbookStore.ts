@@ -79,6 +79,30 @@ export const useWorkbookStore = defineStore('workbook', () => {
     }
   }
 
+  /** 批量粘贴单元格 */
+  function pasteCells(cells: Map<CellRef, CellValue>): void {
+    const sheet = activeSheet.value
+    if (!sheet) return
+    for (const [ref, value] of cells) {
+      if (value === null || value === '') {
+        sheet.cells.delete(ref)
+      } else {
+        const existing = sheet.cells.get(ref)
+        if (existing) {
+          existing.rawValue = value
+          existing.computedValue = value
+          existing.formula = null
+          existing.error = null
+        } else {
+          const cell = createCell(ref)
+          cell.rawValue = value
+          cell.computedValue = value
+          sheet.cells.set(ref, cell)
+        }
+      }
+    }
+  }
+
   // 确保始终有一个默认 Sheet
   if (workbook.value.sheets.length === 0) {
     addSheet('Sheet1')
@@ -91,5 +115,6 @@ export const useWorkbookStore = defineStore('workbook', () => {
     setActiveSheet,
     setCellValue,
     addRows,
+    pasteCells,
   }
 })

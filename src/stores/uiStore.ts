@@ -66,9 +66,37 @@ export const useUiStore = defineStore('ui', () => {
   function startEdit(): void { isEditing.value = true }
   function cancelEdit(): void { isEditing.value = false }
 
+  /** 获取当前选区的归一化边界（用于复制粘贴等操作） */
+  function getSelectionRange(): { startRef: CellRef; endRef: CellRef } {
+    const sel = selection.value
+    if (!sel) return { startRef: activeRef.value, endRef: activeRef.value }
+    // 交换确保 start 在左上角
+    const s = parseRef(sel.startRef)
+    const e = parseRef(sel.endRef)
+    if (!s || !e) return { startRef: activeRef.value, endRef: activeRef.value }
+    const startRow = Math.min(s.row, e.row)
+    const endRow = Math.max(s.row, e.row)
+    const startCol = Math.min(s.col, e.col)
+    const endCol = Math.max(s.col, e.col)
+    return {
+      startRef: `${colToIndexStr(startCol)}${startRow + 1}`,
+      endRef: `${colToIndexStr(endCol)}${endRow + 1}`,
+    }
+  }
+
   return {
     activeRef, selection, isEditing, isDragging,
     selectCell, startRangeSelection, extendSelection, finishSelection,
-    isInSelection, startEdit, cancelEdit,
+    isInSelection, startEdit, cancelEdit, getSelectionRange,
   }
 })
+
+// 辅助：数字 → 列字母
+function colToIndexStr(col: number): string {
+  let result = ''
+  while (col >= 0) {
+    result = String.fromCharCode(65 + (col % 26)) + result
+    col = Math.floor(col / 26) - 1
+  }
+  return result
+}
