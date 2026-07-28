@@ -19,6 +19,15 @@ export const useUiStore = defineStore('ui', () => {
   const isEditing = ref(false)
   const isDragging = ref(false)
 
+  // 列宽/行高拖拽调整状态
+  const resizeState = ref<{
+    type: 'col' | 'row'
+    index: number
+    startX: number
+    startY: number
+    startSize: number
+  } | null>(null)
+
   function selectCell(ref: CellRef): void {
     activeRef.value = ref
     selection.value = { startRef: ref, endRef: ref }
@@ -66,6 +75,18 @@ export const useUiStore = defineStore('ui', () => {
   function startEdit(): void { isEditing.value = true }
   function cancelEdit(): void { isEditing.value = false }
 
+  function startResize(type: 'col' | 'row', index: number, startX: number, startY: number, startSize: number): void {
+    resizeState.value = { type, index, startX, startY, startSize }
+  }
+  function updateResize(x: number, y: number): number {
+    if (!resizeState.value) return 0
+    const diff = resizeState.value.type === 'col' ? x - resizeState.value.startX : y - resizeState.value.startY
+    return Math.max(20, resizeState.value.startSize + diff) // 最小 20px
+  }
+  function finishResize(): void {
+    resizeState.value = null
+  }
+
   /** 获取当前选区的归一化边界（用于复制粘贴等操作） */
   function getSelectionRange(): { startRef: CellRef; endRef: CellRef } {
     const sel = selection.value
@@ -88,6 +109,7 @@ export const useUiStore = defineStore('ui', () => {
     activeRef, selection, isEditing, isDragging,
     selectCell, startRangeSelection, extendSelection, finishSelection,
     isInSelection, startEdit, cancelEdit, getSelectionRange,
+    resizeState, startResize, updateResize, finishResize,
   }
 })
 

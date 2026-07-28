@@ -86,6 +86,20 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         handlePaste()
         return
       }
+      // Ctrl+Shift+= → 在下方插入行
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault()
+        const parsed = parseCellRef(uiStore.activeRef)
+        if (parsed) workbookStore.insertRow(parsed.row)
+        return
+      }
+      // Ctrl+- → 删除当前行
+      if (e.key === '-') {
+        e.preventDefault()
+        const parsed = parseCellRef(uiStore.activeRef)
+        if (parsed) workbookStore.deleteRow(parsed.row)
+        return
+      }
     }
 
     // 如果事件来自输入框（编辑中），不处理 — 让 input 自己的 handler 处理

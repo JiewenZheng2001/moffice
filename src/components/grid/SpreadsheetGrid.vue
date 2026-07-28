@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { useUiStore } from '@/stores/uiStore'
 import { createCell } from '@/model/cell'
 import { indexToCol, colToIndex, toCellRef } from '@/utils/columnUtils'
 import { useVirtualScroll } from '@/composables/useVirtualScroll'
 import { gridScrollRef } from '@/composables/useGridScrollRef'
+import ContextMenu from './ContextMenu.vue'
 import type { Cell } from '@/model/types'
 
 const workbookStore = useWorkbookStore()
@@ -112,6 +113,57 @@ function handleAddRows(): void {
   }
 }
 
+// ---- 右键菜单 ----
+const contextMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null)
+
+function onCellContextMenu(e: MouseEvent, row: number, col: number): void {
+  e.preventDefault()
+  contextMenuRef.value?.show(e.clientX, e.clientY, row, col)
+}
+
+// ---- 列宽/行高拖拽调整 ----
+
+function onColResizeStart(e: MouseEvent, colIndex: number): void {
+  const sheet = workbookStore.activeSheet
+  if (!sheet) return
+  const currentWidth = sheet.columnWidths.get(colIndex) ?? 100
+  uiStore.startResize('col', colIndex, e.clientX, e.clientY, currentWidth)
+}
+
+function onRowResizeStart(e: MouseEvent, rowIndex: number): void {
+  const sheet = workbookStore.activeSheet
+  if (!sheet) return
+  const currentHeight = sheet.rowHeights.get(rowIndex) ?? 24
+  uiStore.startResize('row', rowIndex, e.clientX, e.clientY, currentHeight)
+}
+
+function onWindowMouseMove(e: MouseEvent): void {
+  if (!uiStore.resizeState) return
+  const newSize = uiStore.updateResize(e.clientX, e.clientY)
+  const sheet = workbookStore.activeSheet
+  if (!sheet) return
+  const { type, index } = uiStore.resizeState
+  if (type === 'col') {
+    sheet.columnWidths.set(index, newSize)
+  } else {
+    sheet.rowHeights.set(index, newSize)
+  }
+}
+
+function onWindowMouseUp(): void {
+  uiStore.finishResize()
+}
+
+// 注册/注销 window 级 resize 监听
+onMounted(() => {
+  window.addEventListener('mousemove', onWindowMouseMove)
+  window.addEventListener('mouseup', onWindowMouseUp)
+})
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onWindowMouseMove)
+  window.removeEventListener('mouseup', onWindowMouseUp)
+})
+
 
 function isSelected(row: number, col: number): boolean {
   return uiStore.isInSelection(toCellRef(row, col))
@@ -212,14 +264,26 @@ watch(
       <thead>
         <tr>
           <th class="corner" />
-          <th v-for="label in columnLabels" :key="label" class="col-header" :class="{ 'col-header--active': colToIndex(label) === activeColIndex }">{{ label }}</th>
+          <th v-for="label in columnLabels" :key="label" class="col-header" :class="{ 'col-header--active': colToIndex(label) === activeColIndex }">
+            {{ label }}
+            <div
+              class="col-resize-handle"
+              @mousedown.stop.prevent="onColResizeStart($event, colToIndex(label))"
+            />
+          </th>
         </tr>
       </thead>
       <tbody>
         <!-- 上方占位 spacer -->
         <tr v-if="offsetY > 0" :style="{ height: offsetY + 'px' }" />
         <tr v-for="row in visibleRows" :key="row.index">
-          <td class="row-header" :class="{ 'row-header--active': row.index === activeRowIndex }">{{ row.number }}</td>
+          <td class="row-header" :class="{ 'row-header--active': row.index === activeRowIndex }">
+            {{ row.number }}
+            <div
+              class="row-resize-handle"
+              @mousedown.stop.prevent="onRowResizeStart($event, row.index)"
+            />
+          </td>
           <td
             v-for="colIdx in colCount"
             :key="colIdx"
@@ -231,6 +295,7 @@ watch(
             @mousedown.prevent="uiStore.startRangeSelection(toCellRef(row.index, colIdx - 1))"
             @mouseenter="if (uiStore.isDragging) { uiStore.extendSelection(toCellRef(row.index, colIdx - 1)); }"
             @dblclick="handleCellDblClick(row.index, colIdx - 1)"
+            @contextmenu.prevent="onCellContextMenu($event, row.index, colIdx - 1)"
           >
             <template v-if="isEditing(row.index, colIdx - 1)">
               <input
@@ -267,6 +332,7 @@ watch(
       </tbody>
     </table>
   </div>
+  <ContextMenu ref="contextMenuRef" />
 </template>
 
 <style scoped>
@@ -322,6 +388,21 @@ watch(
   font-weight: 700;
 }
 
+/* 列宽拖拽手柄 */
+.col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+}
+.col-resize-handle:hover {
+  background: var(--primary-color);
+  opacity: 0.3;
+}
+
 /* 行号 */
 .row-header {
   position: sticky;
@@ -338,12 +419,28 @@ watch(
   text-align: center;
   user-select: none;
   transition: background 0.1s;
+  position: relative;
 }
 
 .row-header--active {
   background: var(--grid-selection-bg);
   color: var(--primary-color);
   font-weight: 700;
+}
+
+/* 行高拖拽手柄 */
+.row-resize-handle {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  cursor: row-resize;
+  z-index: 1;
+}
+.row-resize-handle:hover {
+  background: var(--primary-color);
+  opacity: 0.3;
 }
 
 /* 普通单元格 */
