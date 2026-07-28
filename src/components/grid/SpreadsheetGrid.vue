@@ -150,7 +150,8 @@ function onWindowMouseMove(e: MouseEvent): void {
   }
 }
 
-function onWindowMouseUp(): void {
+function onWindowMouseUp(_e: MouseEvent): void {
+  if (!uiStore.resizeState) return
   uiStore.finishResize()
 }
 
@@ -213,6 +214,8 @@ watch(
   () => uiStore.activeRef,
   (ref) => {
     if (!ref) return
+    // 滚动前取消拖拽，防止 scroll 导致 mouseenter 误触发 extendSelection
+    uiStore.finishSelection()
     const match = ref.match(/^([A-Z]+)(\d+)$/i)
     if (!match) return
     const col = colToIndex(match[1].toUpperCase())

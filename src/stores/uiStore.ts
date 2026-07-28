@@ -34,17 +34,15 @@ export const useUiStore = defineStore('ui', () => {
     isEditing.value = false
   }
 
-  /** 开始矩形选区拖拽（不立即设 isDragging，防止点击触发的滚动导致误拖拽） */
+  /** 开始矩形选区拖拽 */
   function startRangeSelection(ref: CellRef): void {
+    isDragging.value = true
     selectCell(ref)
   }
 
-  /** 拖拽中扩展选区（首次调用才设 isDragging） */
+  /** 拖拽中扩展选区 */
   function extendSelection(ref: CellRef): void {
-    if (!selection.value) return
-    if (!isDragging.value) {
-      isDragging.value = true
-    }
+    if (!selection.value || !isDragging.value) return
     selection.value = { ...selection.value, endRef: ref }
   }
 
