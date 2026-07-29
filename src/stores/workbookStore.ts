@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Workbook, Sheet, CellRef, CellValue } from '@/model/types'
-import { createCell } from '@/model/cell'
-import { colToIndex, toCellRef } from '@/utils/columnUtils'
+import { SetCellCommand, PasteCommand, InsertRowCommand, DeleteRowCommand, InsertColumnCommand, DeleteColumnCommand } from '@/model/command'
+import { commandService } from '@/services/commandService'
 
 /**
  * 工作簿 Store —— 持有 Workbook 数据模型
- * 所有数据变更必须通过 Action，禁止组件直接修改 state
+ * 所有数据变更必须通过 CommandService → Command 执行（支持撤销/重做）
  */
 export const useWorkbookStore = defineStore('workbook', () => {
   // ---- State ----
@@ -46,33 +46,15 @@ export const useWorkbookStore = defineStore('workbook', () => {
   }
 
   /**
-   * 设置单元格值
-   * 替换整个 cells 对象以确保 Vue 响应式触发
+   * 设置单元格值（通过命令模式，支持撤销）
    */
   function setCellValue(ref: CellRef, value: CellValue): void {
     const sheet = activeSheet.value
     if (!sheet) return
-
-    if (value === null || value === '') {
-      sheet.cells.delete(ref)
-      return
-    }
-
-    const existing = sheet.cells.get(ref)
-    if (existing) {
-      existing.rawValue = value
-      existing.computedValue = value
-      existing.formula = null
-      existing.error = null
-    } else {
-      const cell = createCell(ref)
-      cell.rawValue = value
-      cell.computedValue = value
-      sheet.cells.set(ref, cell)
-    }
+    commandService.execute(new SetCellCommand(sheet, ref, value))
   }
 
-  /** 手动添加指定数量的行 */
+  /** 手动添加指定数量的行（纯视图操作，不进命令栈） */
   function addRows(count: number): void {
     const sheet = activeSheet.value
     if (sheet && count > 0) {
@@ -80,129 +62,54 @@ export const useWorkbookStore = defineStore('workbook', () => {
     }
   }
 
-  /** 批量粘贴单元格 */
+  /** 批量粘贴单元格（通过命令模式） */
   function pasteCells(cells: Map<CellRef, CellValue>): void {
     const sheet = activeSheet.value
     if (!sheet) return
-    for (const [ref, value] of cells) {
-      if (value === null || value === '') {
-        sheet.cells.delete(ref)
-      } else {
-        const existing = sheet.cells.get(ref)
-        if (existing) {
-          existing.rawValue = value
-          existing.computedValue = value
-          existing.formula = null
-          existing.error = null
-        } else {
-          const cell = createCell(ref)
-          cell.rawValue = value
-          cell.computedValue = value
-          sheet.cells.set(ref, cell)
-        }
-      }
-    }
+    commandService.execute(new PasteCommand(sheet, cells))
   }
 
-  /** 在指定位置后插入一行，下方单元格全部下移 */
+  /** 在指定位置后插入一行 */
   function insertRow(afterRow: number): void {
     const sheet = activeSheet.value
     if (!sheet || afterRow < 0 || afterRow >= sheet.rowCount) return
-
-    sheet.rowCount++
-    shiftRows(sheet, afterRow + 1, 1)
+    commandService.execute(new InsertRowCommand(sheet, afterRow))
   }
 
-  /** 删除指定行，下方单元格全部上移 */
+  /** 删除指定行 */
   function deleteRow(rowIndex: number): void {
     const sheet = activeSheet.value
     if (!sheet || rowIndex < 0 || rowIndex >= sheet.rowCount || sheet.rowCount <= 1) return
-
-    // 先删除该行所有单元格
-    for (let c = 0; c < sheet.columnCount; c++) {
-      sheet.cells.delete(toCellRef(rowIndex, c))
-    }
-    // 下方行上移
-    shiftRows(sheet, rowIndex + 1, -1)
-    sheet.rowCount--
+    commandService.execute(new DeleteRowCommand(sheet, rowIndex))
   }
 
-  /** 在指定位置后插入一列，右侧单元格全部右移 */
+  /** 在指定位置后插入一列 */
   function insertColumn(afterCol: number): void {
     const sheet = activeSheet.value
     if (!sheet || afterCol < 0 || afterCol >= sheet.columnCount) return
-
-    sheet.columnCount++
-    shiftColumns(sheet, afterCol + 1, 1)
+    commandService.execute(new InsertColumnCommand(sheet, afterCol))
   }
 
-  /** 删除指定列，右侧单元格全部左移 */
+  /** 删除指定列 */
   function deleteColumn(colIndex: number): void {
     const sheet = activeSheet.value
     if (!sheet || colIndex < 0 || colIndex >= sheet.columnCount || sheet.columnCount <= 1) return
+    commandService.execute(new DeleteColumnCommand(sheet, colIndex))
+  }
 
-    for (let r = 0; r < sheet.rowCount; r++) {
-      sheet.cells.delete(toCellRef(r, colIndex))
-    }
-    shiftColumns(sheet, colIndex + 1, -1)
-    sheet.columnCount--
+  // ---- 撤销/重做 ----
+
+  function undo(): void {
+    commandService.undo()
+  }
+
+  function redo(): void {
+    commandService.redo()
   }
 
   // 确保始终有一个默认 Sheet
   if (workbook.value.sheets.length === 0) {
     addSheet('Sheet1')
-  }
-
-  /** 行位移辅助：从 fromRow 起，所有行 +delta */
-  function shiftRows(sheet: Sheet, fromRow: number, delta: number): void {
-    const affected: { oldRef: CellRef; cell: ReturnType<typeof createCell> }[] = []
-    for (const [ref, cell] of sheet.cells) {
-      const m = ref.match(/^([A-Z]+)(\d+)$/i)
-      if (!m) continue
-      const row = parseInt(m[2], 10) - 1
-      if (row >= fromRow) {
-        affected.push({ oldRef: ref, cell })
-      }
-    }
-    for (const { oldRef } of affected) {
-      sheet.cells.delete(oldRef)
-    }
-    for (const { cell } of affected) {
-      const m = cell.id.match(/^([A-Z]+)(\d+)$/i)!
-      const col = colToIndex(m[1].toUpperCase())
-      const newRow = parseInt(m[2], 10) - 1 + delta
-      if (newRow >= 0 && newRow < sheet.rowCount) {
-        const newRef = toCellRef(newRow, col)
-        cell.id = newRef
-        sheet.cells.set(newRef, cell)
-      }
-    }
-  }
-
-  /** 列位移辅助：从 fromCol 起，所有列 +delta */
-  function shiftColumns(sheet: Sheet, fromCol: number, delta: number): void {
-    const affected: { oldRef: CellRef; cell: ReturnType<typeof createCell> }[] = []
-    for (const [ref, cell] of sheet.cells) {
-      const m = ref.match(/^([A-Z]+)(\d+)$/i)
-      if (!m) continue
-      const col = colToIndex(m[1].toUpperCase())
-      if (col >= fromCol) {
-        affected.push({ oldRef: ref, cell })
-      }
-    }
-    for (const { oldRef } of affected) {
-      sheet.cells.delete(oldRef)
-    }
-    for (const { cell } of affected) {
-      const m = cell.id.match(/^([A-Z]+)(\d+)$/i)!
-      const row = parseInt(m[2], 10) - 1
-      const newCol = colToIndex(m[1].toUpperCase()) + delta
-      if (newCol >= 0 && newCol < sheet.columnCount) {
-        const newRef = toCellRef(row, newCol)
-        cell.id = newRef
-        sheet.cells.set(newRef, cell)
-      }
-    }
   }
 
   return {
@@ -217,5 +124,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     deleteRow,
     insertColumn,
     deleteColumn,
+    undo,
+    redo,
   }
 })

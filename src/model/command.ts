@@ -1,0 +1,381 @@
+import type { CellRef, CellValue, Sheet } from './types'
+import { createCell } from './cell'
+import { colToIndex, toCellRef } from '@/utils/columnUtils'
+
+// ═══════════════════════════════════════════════
+// 命令模式 — 所有修改 Workbook 数据的操作必须封装为 Command
+// 通过 CommandService 统一入栈，支持撤销/重做
+// ═══════════════════════════════════════════════
+
+/**
+ * Command 抽象接口
+ * - execute(): 执行操作（首次执行或重做时调用）
+ * - undo(): 撤销操作
+ * - description: 调试用描述文本
+ */
+export interface ICommand {
+  readonly description: string
+  execute(): void
+  undo(): void
+}
+
+// ═══════════════════════════════════════════════
+// 设置单元格值
+// ═══════════════════════════════════════════════
+
+export class SetCellCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private ref: CellRef
+  private newValue: CellValue
+  private oldValue: CellValue
+  private oldFormula: string | null
+  private hadOldCell: boolean
+
+  constructor(sheet: Sheet, ref: CellRef, newValue: CellValue) {
+    this.sheet = sheet
+    this.ref = ref
+    this.newValue = newValue
+    this.description = `SET ${ref} = ${String(newValue)}`
+    // 保存旧状态用于撤销
+    const oldCell = sheet.cells.get(ref)
+    if (oldCell) {
+      this.hadOldCell = true
+      this.oldValue = oldCell.rawValue
+      this.oldFormula = oldCell.formula
+    } else {
+      this.hadOldCell = false
+      this.oldValue = null
+      this.oldFormula = null
+    }
+  }
+
+  execute(): void {
+    if (this.newValue === null || this.newValue === '') {
+      this.sheet.cells.delete(this.ref)
+    } else {
+      const existing = this.sheet.cells.get(this.ref)
+      if (existing) {
+        existing.rawValue = this.newValue
+        existing.computedValue = this.newValue
+        existing.formula = null
+        existing.error = null
+      } else {
+        const cell = createCell(this.ref)
+        cell.rawValue = this.newValue
+        cell.computedValue = this.newValue
+        this.sheet.cells.set(this.ref, cell)
+      }
+    }
+  }
+
+  undo(): void {
+    if (!this.hadOldCell) {
+      this.sheet.cells.delete(this.ref)
+    } else {
+      const cell = createCell(this.ref)
+      cell.rawValue = this.oldValue
+      cell.computedValue = this.oldValue
+      cell.formula = this.oldFormula
+      cell.error = null
+      this.sheet.cells.set(this.ref, cell)
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 批量设置单元格（粘贴）
+// ═══════════════════════════════════════════════
+
+/** 单元格状态快照：用于撤销批量操作 */
+interface CellSnapshot {
+  ref: CellRef
+  value: CellValue
+  formula: string | null
+}
+
+export class PasteCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private cellsToPaste: Map<CellRef, CellValue>
+  private snapshots: CellSnapshot[] = []
+
+  constructor(sheet: Sheet, cellsToPaste: Map<CellRef, CellValue>) {
+    this.sheet = sheet
+    this.cellsToPaste = cellsToPaste
+    this.description = `PASTE ${cellsToPaste.size} cells`
+    // 保存将被覆盖的单元格的旧状态
+    for (const ref of cellsToPaste.keys()) {
+      const old = sheet.cells.get(ref)
+      if (old) {
+        this.snapshots.push({
+          ref,
+          value: old.rawValue,
+          formula: old.formula,
+        })
+      } else {
+        this.snapshots.push({ ref, value: null, formula: null })
+      }
+    }
+  }
+
+  execute(): void {
+    for (const [ref, value] of this.cellsToPaste) {
+      if (value === null || value === '') {
+        this.sheet.cells.delete(ref)
+      } else {
+        const existing = this.sheet.cells.get(ref)
+        if (existing) {
+          existing.rawValue = value
+          existing.computedValue = value
+          existing.formula = null
+          existing.error = null
+        } else {
+          const cell = createCell(ref)
+          cell.rawValue = value
+          cell.computedValue = value
+          this.sheet.cells.set(ref, cell)
+        }
+      }
+    }
+  }
+
+  undo(): void {
+    for (const snap of this.snapshots) {
+      if (snap.value === null) {
+        this.sheet.cells.delete(snap.ref)
+      } else {
+        const cell = createCell(snap.ref)
+        cell.rawValue = snap.value
+        cell.computedValue = snap.value
+        cell.formula = snap.formula
+        cell.error = null
+        this.sheet.cells.set(snap.ref, cell)
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 插入行
+// ═══════════════════════════════════════════════
+
+export class InsertRowCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private afterRow: number
+
+  constructor(sheet: Sheet, afterRow: number) {
+    this.sheet = sheet
+    this.afterRow = afterRow
+    this.description = `INSERT_ROW after row ${afterRow + 1}`
+  }
+
+  execute(): void {
+    if (this.afterRow < 0 || this.afterRow >= this.sheet.rowCount) return
+    this.sheet.rowCount++
+    shiftRows(this.sheet, this.afterRow + 1, 1)
+  }
+
+  undo(): void {
+    if (this.afterRow < 0 || this.afterRow + 1 >= this.sheet.rowCount) return
+    // 删除插入的行（afterRow+1 位置）
+    for (let c = 0; c < this.sheet.columnCount; c++) {
+      this.sheet.cells.delete(toCellRef(this.afterRow + 1, c))
+    }
+    // 下方行上移回原位
+    shiftRows(this.sheet, this.afterRow + 2, -1)
+    this.sheet.rowCount--
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 删除行
+// ═══════════════════════════════════════════════
+
+export class DeleteRowCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private rowIndex: number
+  /** 被删除行中的所有单元格快照 */
+  private deletedCells: { ref: CellRef; value: CellValue; formula: string | null }[] = []
+
+  constructor(sheet: Sheet, rowIndex: number) {
+    this.sheet = sheet
+    this.rowIndex = rowIndex
+    this.description = `DELETE_ROW row ${rowIndex + 1}`
+    // 保存被删除的单元格状态
+    for (let c = 0; c < sheet.columnCount; c++) {
+      const ref = toCellRef(rowIndex, c)
+      const cell = sheet.cells.get(ref)
+      if (cell) {
+        this.deletedCells.push({
+          ref,
+          value: cell.rawValue,
+          formula: cell.formula,
+        })
+      }
+    }
+  }
+
+  execute(): void {
+    if (this.rowIndex < 0 || this.rowIndex >= this.sheet.rowCount || this.sheet.rowCount <= 1) return
+    for (let c = 0; c < this.sheet.columnCount; c++) {
+      this.sheet.cells.delete(toCellRef(this.rowIndex, c))
+    }
+    shiftRows(this.sheet, this.rowIndex + 1, -1)
+    this.sheet.rowCount--
+  }
+
+  undo(): void {
+    // 恢复删除的行：下方行先下移
+    this.sheet.rowCount++
+    shiftRows(this.sheet, this.rowIndex, 1)
+    // 恢复被删除的单元格内容
+    for (const { ref, value, formula } of this.deletedCells) {
+      const cell = createCell(ref)
+      cell.rawValue = value
+      cell.computedValue = value
+      cell.formula = formula
+      cell.error = null
+      this.sheet.cells.set(ref, cell)
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 插入列
+// ═══════════════════════════════════════════════
+
+export class InsertColumnCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private afterCol: number
+
+  constructor(sheet: Sheet, afterCol: number) {
+    this.sheet = sheet
+    this.afterCol = afterCol
+    this.description = `INSERT_COL after col ${String.fromCharCode(65 + afterCol)}`
+  }
+
+  execute(): void {
+    if (this.afterCol < 0 || this.afterCol >= this.sheet.columnCount) return
+    this.sheet.columnCount++
+    shiftColumns(this.sheet, this.afterCol + 1, 1)
+  }
+
+  undo(): void {
+    if (this.afterCol < 0 || this.afterCol + 1 >= this.sheet.columnCount) return
+    for (let r = 0; r < this.sheet.rowCount; r++) {
+      this.sheet.cells.delete(toCellRef(r, this.afterCol + 1))
+    }
+    shiftColumns(this.sheet, this.afterCol + 2, -1)
+    this.sheet.columnCount--
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 删除列
+// ═══════════════════════════════════════════════
+
+export class DeleteColumnCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private colIndex: number
+  private deletedCells: { ref: CellRef; value: CellValue; formula: string | null }[] = []
+
+  constructor(sheet: Sheet, colIndex: number) {
+    this.sheet = sheet
+    this.colIndex = colIndex
+    this.description = `DELETE_COL col ${String.fromCharCode(65 + colIndex)}`
+    for (let r = 0; r < sheet.rowCount; r++) {
+      const ref = toCellRef(r, colIndex)
+      const cell = sheet.cells.get(ref)
+      if (cell) {
+        this.deletedCells.push({
+          ref,
+          value: cell.rawValue,
+          formula: cell.formula,
+        })
+      }
+    }
+  }
+
+  execute(): void {
+    if (this.colIndex < 0 || this.colIndex >= this.sheet.columnCount || this.sheet.columnCount <= 1) return
+    for (let r = 0; r < this.sheet.rowCount; r++) {
+      this.sheet.cells.delete(toCellRef(r, this.colIndex))
+    }
+    shiftColumns(this.sheet, this.colIndex + 1, -1)
+    this.sheet.columnCount--
+  }
+
+  undo(): void {
+    this.sheet.columnCount++
+    shiftColumns(this.sheet, this.colIndex, 1)
+    for (const { ref, value, formula } of this.deletedCells) {
+      const cell = createCell(ref)
+      cell.rawValue = value
+      cell.computedValue = value
+      cell.formula = formula
+      cell.error = null
+      this.sheet.cells.set(ref, cell)
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 行列位移辅助函数（纯函数，不引入副作用）
+// ═══════════════════════════════════════════════
+
+/** 从 fromRow 起，所有行 +delta（delta 可正可负） */
+function shiftRows(sheet: Sheet, fromRow: number, delta: number): void {
+  const affected: { oldRef: CellRef; cell: ReturnType<typeof createCell> }[] = []
+  for (const [ref, cell] of sheet.cells) {
+    const m = ref.match(/^([A-Z]+)(\d+)$/i)
+    if (!m) continue
+    const row = parseInt(m[2], 10) - 1
+    if (row >= fromRow) {
+      affected.push({ oldRef: ref, cell })
+    }
+  }
+  for (const { oldRef } of affected) {
+    sheet.cells.delete(oldRef)
+  }
+  for (const { cell } of affected) {
+    const m = cell.id.match(/^([A-Z]+)(\d+)$/i)!
+    const col = colToIndex(m[1].toUpperCase())
+    const newRow = parseInt(m[2], 10) - 1 + delta
+    if (newRow >= 0 && newRow < sheet.rowCount) {
+      const newRef = toCellRef(newRow, col)
+      cell.id = newRef
+      sheet.cells.set(newRef, cell)
+    }
+  }
+}
+
+/** 从 fromCol 起，所有列 +delta */
+function shiftColumns(sheet: Sheet, fromCol: number, delta: number): void {
+  const affected: { oldRef: CellRef; cell: ReturnType<typeof createCell> }[] = []
+  for (const [ref, cell] of sheet.cells) {
+    const m = ref.match(/^([A-Z]+)(\d+)$/i)
+    if (!m) continue
+    const col = colToIndex(m[1].toUpperCase())
+    if (col >= fromCol) {
+      affected.push({ oldRef: ref, cell })
+    }
+  }
+  for (const { oldRef } of affected) {
+    sheet.cells.delete(oldRef)
+  }
+  for (const { cell } of affected) {
+    const m = cell.id.match(/^([A-Z]+)(\d+)$/i)!
+    const row = parseInt(m[2], 10) - 1
+    const newCol = colToIndex(m[1].toUpperCase()) + delta
+    if (newCol >= 0 && newCol < sheet.columnCount) {
+      const newRef = toCellRef(row, newCol)
+      cell.id = newRef
+      sheet.cells.set(newRef, cell)
+    }
+  }
+}

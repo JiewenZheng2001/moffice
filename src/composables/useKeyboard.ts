@@ -110,10 +110,24 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         if (parsed) workbookStore.deleteRow(parsed.row)
         return
       }
+      // Ctrl+Z → 撤销
+      if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault()
+        workbookStore.undo()
+        return
+      }
+      // Ctrl+Y / Ctrl+Shift+Z → 重做
+      if (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z'))) {
+        e.preventDefault()
+        workbookStore.redo()
+        return
+      }
     }
 
-    // 如果事件来自输入框（编辑中），不处理 — 让 input 自己的 handler 处理
-    if ((e.target as HTMLElement)?.tagName === 'INPUT') return
+    // 如果事件来自输入框（编辑中），不处理方向键等导航 — 但允许 Tab/Enter/Escape 穿透
+    if ((e.target as HTMLElement)?.tagName === 'INPUT') {
+      if (e.key !== 'Tab' && e.key !== 'Enter' && e.key !== 'Escape') return
+    }
 
     const active = uiStore.activeRef
     const parsed = parseCellRef(active)
