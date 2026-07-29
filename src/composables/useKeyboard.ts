@@ -79,19 +79,25 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
       const sheet = workbookStore.activeSheet
       if (!sheet) return
 
+      // 如果焦点在任何输入框内，让浏览器原生处理剪贴板，不走自定义单元格逻辑
+      const isInputFocused = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA'
+
       if (e.key === 'c' || e.key === 'C') {
+        if (isInputFocused) return
         e.preventDefault()
         const range = uiStore.getSelectionRange()
         copySelection(sheet, range.startRef, range.endRef)
         return
       }
       if (e.key === 'x' || e.key === 'X') {
+        if (isInputFocused) return
         e.preventDefault()
         const range = uiStore.getSelectionRange()
         cutSelection(sheet, range.startRef, range.endRef)
         return
       }
       if (e.key === 'v' || e.key === 'V') {
+        if (isInputFocused) return
         e.preventDefault()
         handlePaste()
         return

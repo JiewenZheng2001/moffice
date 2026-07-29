@@ -17,6 +17,8 @@ export interface ICommand {
   readonly description: string
   execute(): void
   undo(): void
+  /** 返回此命令影响的所有单元格引用（用于 undo/redo 后触发依赖重算） */
+  getAffectedRefs(): CellRef[]
 }
 
 // ═══════════════════════════════════════════════
@@ -28,15 +30,18 @@ export class SetCellCommand implements ICommand {
   private sheet: Sheet
   private ref: CellRef
   private newValue: CellValue
+  private formula: string | null
   private oldValue: CellValue
   private oldFormula: string | null
   private hadOldCell: boolean
 
-  constructor(sheet: Sheet, ref: CellRef, newValue: CellValue) {
+  /** @param formulaStr 如果是公式，传入公式字符串（如 "=SUM(A1:A3)"）；否则为 null */
+  constructor(sheet: Sheet, ref: CellRef, newValue: CellValue, formulaStr: string | null = null) {
     this.sheet = sheet
     this.ref = ref
     this.newValue = newValue
-    this.description = `SET ${ref} = ${String(newValue)}`
+    this.formula = formulaStr
+    this.description = formulaStr ? `SET ${ref} = ${formulaStr}` : `SET ${ref} = ${String(newValue)}`
     // 保存旧状态用于撤销
     const oldCell = sheet.cells.get(ref)
     if (oldCell) {
@@ -56,14 +61,15 @@ export class SetCellCommand implements ICommand {
     } else {
       const existing = this.sheet.cells.get(this.ref)
       if (existing) {
-        existing.rawValue = this.newValue
+        existing.rawValue = this.formula ?? this.newValue
         existing.computedValue = this.newValue
-        existing.formula = null
+        existing.formula = this.formula
         existing.error = null
       } else {
         const cell = createCell(this.ref)
-        cell.rawValue = this.newValue
+        cell.rawValue = this.formula ?? this.newValue
         cell.computedValue = this.newValue
+        cell.formula = this.formula
         this.sheet.cells.set(this.ref, cell)
       }
     }
@@ -80,6 +86,10 @@ export class SetCellCommand implements ICommand {
       cell.error = null
       this.sheet.cells.set(this.ref, cell)
     }
+  }
+
+  getAffectedRefs(): CellRef[] {
+    return [this.ref]
   }
 }
 
@@ -154,6 +164,10 @@ export class PasteCommand implements ICommand {
       }
     }
   }
+
+  getAffectedRefs(): CellRef[] {
+    return [...this.cellsToPaste.keys()]
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -187,6 +201,8 @@ export class InsertRowCommand implements ICommand {
     shiftRows(this.sheet, this.afterRow + 2, -1)
     this.sheet.rowCount--
   }
+
+  getAffectedRefs(): CellRef[] { return [] }
 }
 
 // ═══════════════════════════════════════════════
@@ -241,6 +257,8 @@ export class DeleteRowCommand implements ICommand {
       this.sheet.cells.set(ref, cell)
     }
   }
+
+  getAffectedRefs(): CellRef[] { return [] }
 }
 
 // ═══════════════════════════════════════════════
@@ -272,6 +290,8 @@ export class InsertColumnCommand implements ICommand {
     shiftColumns(this.sheet, this.afterCol + 2, -1)
     this.sheet.columnCount--
   }
+
+  getAffectedRefs(): CellRef[] { return [] }
 }
 
 // ═══════════════════════════════════════════════
@@ -322,6 +342,8 @@ export class DeleteColumnCommand implements ICommand {
       this.sheet.cells.set(ref, cell)
     }
   }
+
+  getAffectedRefs(): CellRef[] { return [] }
 }
 
 // ═══════════════════════════════════════════════

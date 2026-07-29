@@ -54,20 +54,22 @@ class CommandService {
     }
   }
 
-  /** 撤销最近一次操作 */
-  undo(): void {
+  /** 撤销最近一次操作，返回被撤销的命令（供外部做依赖重算） */
+  undo(): ICommand | null {
     const command = this.undoStack.pop()
-    if (!command) return
+    if (!command) return null
     command.undo()
     this.redoStack.push(command)
+    return command
   }
 
-  /** 重做最近一次撤销 */
-  redo(): void {
+  /** 重做最近一次撤销，返回被重做的命令 */
+  redo(): ICommand | null {
     const command = this.redoStack.pop()
-    if (!command) return
+    if (!command) return null
     command.execute()
     this.undoStack.push(command)
+    return command
   }
 
   /** 清空所有历史（切换 Sheet 等场景） */
