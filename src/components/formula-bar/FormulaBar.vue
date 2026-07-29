@@ -8,6 +8,8 @@ const workbookStore = useWorkbookStore()
 
 /** 公式栏双向绑定值 */
 const formulaText = ref('')
+/** 输入框引用（用于提交后失焦） */
+const inputRef = ref<HTMLInputElement | null>(null)
 
 /** 当前选中的单元格地址显示 */
 const cellRef = computed(() => uiStore.activeRef)
@@ -29,6 +31,8 @@ function commitFormula(): void {
   const ref = uiStore.activeRef
   if (!ref) return
   workbookStore.setCellValue(ref, formulaText.value || null)
+  // 提交后失焦，避免后续 Ctrl+C/V 被 isInputFocused 拦截
+  inputRef.value?.blur()
 }
 </script>
 
@@ -42,6 +46,7 @@ function commitFormula(): void {
     <div class="formula-input-wrapper">
       <span class="formula-icon">fx</span>
       <input
+        ref="inputRef"
         v-model="formulaText"
         class="formula-input"
         type="text"

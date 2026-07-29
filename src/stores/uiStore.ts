@@ -19,6 +19,12 @@ export const useUiStore = defineStore('ui', () => {
   const isEditing = ref(false)
   const isDragging = ref(false)
 
+  /** 剪切模式：Excel 虚线框标记的源区域，粘贴后清空并复位 */
+  const cutRange = ref<CellRange | null>(null)
+
+  /** 复制模式：虚线框标记的源区域，粘贴后不清空也不复位 */
+  const copyRange = ref<CellRange | null>(null)
+
   // 列宽/行高拖拽调整状态
   const resizeState = ref<{
     type: 'col' | 'row'
@@ -70,7 +76,11 @@ export const useUiStore = defineStore('ui', () => {
     return c.row >= minRow && c.row <= maxRow && c.col >= minCol && c.col <= maxCol
   }
 
-  function startEdit(): void { isEditing.value = true }
+  function startEdit(): void {
+    isEditing.value = true
+    // 编辑操作结束所有虚线框模式（剪切+复制均被打断）
+    clearAllRanges()
+  }
   function cancelEdit(): void { isEditing.value = false }
 
   function startResize(type: 'col' | 'row', index: number, startX: number, startY: number, startSize: number): void {
@@ -103,11 +113,49 @@ export const useUiStore = defineStore('ui', () => {
     }
   }
 
+  // ---- 剪切/复制模式 ----
+
+  /** 进入剪切模式（粘贴后清空源格 + 清除虚线框） */
+  function setCutRange(range: CellRange): void {
+    cutRange.value = range
+    copyRange.value = null
+  }
+
+  /** 进入复制模式（粘贴后保留源格和虚线框） */
+  function setCopyRange(range: CellRange): void {
+    copyRange.value = range
+    cutRange.value = null
+  }
+
+  /** 退出剪切模式（同时清空剪贴板） */
+  function clearCutRange(): void {
+    if (cutRange.value) {
+      cutRange.value = null
+      clearClipboard()
+    }
+  }
+
+  /** 退出复制模式 */
+  function clearCopyRange(): void {
+    copyRange.value = null
+  }
+
+  /** 退出所有虚线框模式（同时清空剪贴板） */
+  function clearAllRanges(): void {
+    if (cutRange.value) {
+      clearClipboard()
+    }
+    cutRange.value = null
+    copyRange.value = null
+  }
+
   return {
     activeRef, selection, isEditing, isDragging,
     selectCell, startRangeSelection, extendSelection, finishSelection,
     isInSelection, startEdit, cancelEdit, getSelectionRange,
     resizeState, startResize, updateResize, finishResize,
+    cutRange, copyRange,
+    setCutRange, setCopyRange, clearCutRange, clearCopyRange, clearAllRanges,
   }
 })
 
@@ -119,4 +167,11 @@ function colToIndexStr(col: number): string {
     col = Math.floor(col / 26) - 1
   }
   return result
+}
+
+/** 清空系统剪贴板 */
+async function clearClipboard(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText('')
+  } catch { /* 非 HTTPS 环境降级 */ }
 }

@@ -19,6 +19,40 @@ export interface ICommand {
   undo(): void
   /** 返回此命令影响的所有单元格引用（用于 undo/redo 后触发依赖重算） */
   getAffectedRefs(): CellRef[]
+  /** 如果是剪切命令，返回源区域引用（用于 undo 后恢复虚线框 UI 状态） */
+  getSourceRefs?(): CellRef[]
+}
+
+// ═══════════════════════════════════════════════
+// 组合命令 —— 将多个命令打包为一个原子操作
+// ═══════════════════════════════════════════════
+
+export class CompoundCommand implements ICommand {
+  readonly description: string
+  private commands: ICommand[]
+
+  constructor(
+    commands: ICommand[],
+    desc?: string,
+  ) {
+    this.commands = commands
+    this.description = desc ?? `Batch ${commands.length} commands`
+  }
+
+  execute(): void {
+    for (const cmd of this.commands) cmd.execute()
+  }
+
+  undo(): void {
+    // 逆序撤销（最后执行的最先撤销）
+    for (let i = this.commands.length - 1; i >= 0; i--) {
+      this.commands[i].undo()
+    }
+  }
+
+  getAffectedRefs(): CellRef[] {
+    return this.commands.flatMap((c) => c.getAffectedRefs())
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -167,6 +201,117 @@ export class PasteCommand implements ICommand {
 
   getAffectedRefs(): CellRef[] {
     return [...this.cellsToPaste.keys()]
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 剪切+粘贴（Excel 虚线框模式）
+// ═══════════════════════════════════════════════
+
+export class CutPasteCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private pasteCells: Map<CellRef, CellValue>
+  private sourceSnapshots: CellSnapshot[] = []
+  private targetSnapshots: CellSnapshot[] = []
+  /** 源格 TSV，用于 undo 后恢复剪贴板 */
+  private clipboardTsv: string = ''
+
+  constructor(
+    sheet: Sheet,
+    sourceRefs: CellRef[],
+    pasteCells: Map<CellRef, CellValue>,
+    clipboardTsv: string = '',
+  ) {
+    this.sheet = sheet
+    this.pasteCells = pasteCells
+    this.clipboardTsv = clipboardTsv
+    this.description = `Cut & Paste ${sourceRefs.length} → ${pasteCells.size}`
+
+    // 保存源格快照
+    for (const ref of sourceRefs) {
+      const cell = sheet.cells.get(ref)
+      this.sourceSnapshots.push({
+        ref,
+        value: cell?.rawValue ?? null,
+        formula: cell?.formula ?? null,
+      })
+    }
+    // 保存粘贴目标的旧状态
+    for (const ref of pasteCells.keys()) {
+      const cell = sheet.cells.get(ref)
+      this.targetSnapshots.push({
+        ref,
+        value: cell?.rawValue ?? null,
+        formula: cell?.formula ?? null,
+      })
+    }
+  }
+
+  execute(): void {
+    // 1. 清空源格
+    for (const snap of this.sourceSnapshots) {
+      this.sheet.cells.delete(snap.ref)
+    }
+    // 2. 写入目标
+    for (const [ref, value] of this.pasteCells) {
+      if (value === null || value === '') {
+        this.sheet.cells.delete(ref)
+      } else {
+        const existing = this.sheet.cells.get(ref)
+        if (existing) {
+          existing.rawValue = value
+          existing.computedValue = value
+          existing.formula = null
+          existing.error = null
+        } else {
+          const cell = createCell(ref)
+          cell.rawValue = value
+          cell.computedValue = value
+          this.sheet.cells.set(ref, cell)
+        }
+      }
+    }
+  }
+
+  undo(): void {
+    // 1. 恢复粘贴目标到旧状态
+    for (const snap of this.targetSnapshots) {
+      if (snap.value === null) {
+        this.sheet.cells.delete(snap.ref)
+      } else {
+        const cell = createCell(snap.ref)
+        cell.rawValue = snap.value
+        cell.computedValue = snap.value
+        cell.formula = snap.formula
+        cell.error = null
+        this.sheet.cells.set(snap.ref, cell)
+      }
+    }
+    // 2. 恢复源格
+    for (const snap of this.sourceSnapshots) {
+      if (snap.value === null) {
+        this.sheet.cells.delete(snap.ref)
+      } else {
+        const cell = createCell(snap.ref)
+        cell.rawValue = snap.value
+        cell.computedValue = snap.value
+        cell.formula = snap.formula
+        cell.error = null
+        this.sheet.cells.set(snap.ref, cell)
+      }
+    }
+    // 3. 恢复剪贴板（撤销后用户可直接再粘贴）
+    restoreClipboard(this.clipboardTsv)
+  }
+
+  getAffectedRefs(): CellRef[] {
+    return [...this.pasteCells.keys(), ...this.sourceSnapshots.map((s) => s.ref)]
+  }
+
+  /** 返回剪切源区域（用于 undo 后恢复虚线框 UI） */
+  getSourceRefs(): CellRef[] {
+    return this.sourceSnapshots.map((s) => s.ref)
   }
 }
 
@@ -399,5 +544,15 @@ function shiftColumns(sheet: Sheet, fromCol: number, delta: number): void {
       cell.id = newRef
       sheet.cells.set(newRef, cell)
     }
+  }
+}
+
+/** 恢复剪贴板内容（撤销剪切粘贴后调用） */
+async function restoreClipboard(tsv: string): Promise<void> {
+  if (!tsv) return
+  try {
+    await navigator.clipboard.writeText(tsv)
+  } catch {
+    // 降级：非 HTTPS 环境可能失败
   }
 }

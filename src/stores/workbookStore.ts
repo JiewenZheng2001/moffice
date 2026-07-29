@@ -4,6 +4,7 @@ import type { Workbook, Sheet, CellRef, CellValue } from '@/model/types'
 import { SetCellCommand, PasteCommand, InsertRowCommand, DeleteRowCommand, InsertColumnCommand, DeleteColumnCommand } from '@/model/command'
 import { commandService } from '@/services/commandService'
 import { useFormulaStore } from './formulaStore'
+import { useUiStore } from './uiStore'
 
 /**
  * 工作簿 Store —— 持有 Workbook 数据模型
@@ -54,6 +55,10 @@ export const useWorkbookStore = defineStore('workbook', () => {
   function setCellValue(ref: CellRef, value: CellValue): void {
     const sheet = activeSheet.value
     if (!sheet) return
+
+    // 修改单元格值 → 退出所有虚线框模式
+    const uiStore = useUiStore()
+    uiStore.clearAllRanges()
 
     // 非公式的字符串值自动转为数值（Excel 标准行为）
     if (typeof value === 'string' && !value.startsWith('=')) {
@@ -157,19 +162,33 @@ export const useWorkbookStore = defineStore('workbook', () => {
     commandService.execute(new DeleteColumnCommand(sheet, colIndex))
   }
 
-  // ---- 撤销/重做（含依赖传播） ----
+  // ---- 撤销/重做（含依赖传播 + 剪切状态恢复） ----
 
   function undo(): void {
     const command = commandService.undo()
     if (!command) return
-    // 获取受影响的单元格，触发依赖重算
     recalcAffected(command)
+    restoreCutRange(command)
   }
 
   function redo(): void {
     const command = commandService.redo()
     if (!command) return
     recalcAffected(command)
+    // 重做剪切粘贴时恢复虚线框
+    if (command.getSourceRefs) {
+      restoreCutRange(command)
+    }
+  }
+
+  /** 如果命令是剪切操作，恢复 uiStore 的 cutRange 虚线框状态 */
+  function restoreCutRange(command: { getSourceRefs?(): string[] }): void {
+    if (!command.getSourceRefs) return
+    const refs = command.getSourceRefs()
+    if (refs.length === 0) return
+    const uiStore = useUiStore()
+    const sorted = [...refs].sort()
+    uiStore.setCutRange({ startRef: sorted[0], endRef: sorted[sorted.length - 1] })
   }
 
   /** undo/redo 后重算受影响的公式（含依赖传播） */

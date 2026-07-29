@@ -77,6 +77,10 @@ async function handleCellDblClick(row: number, col: number): Promise<void> {
 
 /** 单元格鼠标按下：先保存当前编辑，再开始选区 */
 function onCellMouseDown(row: number, col: number): void {
+  // 点击单元格时让任何输入框失焦（避免复制粘贴被 isInputFocused 拦截）
+  if (document.activeElement?.tagName === 'INPUT') {
+    ;(document.activeElement as HTMLElement).blur()
+  }
   saveCurrentEdit()
   uiStore.startRangeSelection(toCellRef(row, col))
 }
@@ -190,6 +194,31 @@ function isActive(row: number, col: number): boolean {
   return toCellRef(row, col) === uiStore.activeRef
 }
 
+/** 是否在剪切或复制的虚线框内 */
+function isInCutRange(row: number, col: number): boolean {
+  const range = uiStore.cutRange ?? uiStore.copyRange
+  if (!range) return false
+  const ref = toCellRef(row, col)
+  return isBetweenRef(ref, range.startRef, range.endRef)
+}
+
+/** 判断 ref 是否在 startRef→endRef 矩形内 */
+function isBetweenRef(ref: string, a: string, b: string): boolean {
+  const r = parseRefRowCol(ref)
+  const s = parseRefRowCol(a)
+  const e = parseRefRowCol(b)
+  if (!r || !s || !e) return false
+  const rMin = Math.min(s.row, e.row), rMax = Math.max(s.row, e.row)
+  const cMin = Math.min(s.col, e.col), cMax = Math.max(s.col, e.col)
+  return r.row >= rMin && r.row <= rMax && r.col >= cMin && r.col <= cMax
+}
+
+function parseRefRowCol(ref: string): { row: number; col: number } | null {
+  const m = ref.match(/^([A-Z]+)(\d+)$/i)
+  if (!m) return null
+  return { col: colToIndex(m[1].toUpperCase()), row: parseInt(m[2], 10) - 1 }
+}
+
 function isEditing(row: number, col: number): boolean {
   return editCellRef.value === toCellRef(row, col)
 }
@@ -261,6 +290,7 @@ watch(
             :class="{
               'cell--selected': isSelected(row.index, colIdx - 1),
               'cell--active': isActive(row.index, colIdx - 1),
+              'cell--cut': isInCutRange(row.index, colIdx - 1),
             }"
             @mousedown.prevent="onCellMouseDown(row.index, colIdx - 1)"
             @mouseenter="if (uiStore.isDragging) { uiStore.extendSelection(toCellRef(row.index, colIdx - 1)); }"
@@ -444,6 +474,12 @@ watch(
   position: relative;
   box-shadow: 0 0 0 2px var(--grid-active-cell-border);
   z-index: 0;
+}
+
+/* 剪切模式虚线框（Excel marching ants 效果） */
+.cell--cut {
+  outline: 2px dashed var(--grid-active-cell-border);
+  outline-offset: -1px;
 }
 
 .cell-value {

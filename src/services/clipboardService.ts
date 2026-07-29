@@ -81,7 +81,8 @@ export async function copySelection(sheet: Sheet, startRef: CellRef, endRef: Cel
 }
 
 /**
- * 剪切 = 复制 + 清空选区
+ * 剪切 = 复制到剪贴板（不清空单元格，清空由粘贴时按 Excel 虚线框模式执行）
+ * @returns bounds 和 tsv，供调用方设置剪切模式
  */
 export async function cutSelection(sheet: Sheet, startRef: CellRef, endRef: CellRef): Promise<{ bounds: SelectionBounds; tsv: string } | null> {
   const bounds = getSelectionBounds(startRef, endRef)
@@ -91,13 +92,7 @@ export async function cutSelection(sheet: Sheet, startRef: CellRef, endRef: Cell
   } catch {
     fallbackCopy(tsv)
   }
-  // 清空选区内所有单元格
-  for (let r = bounds.startRow; r <= bounds.endRow; r++) {
-    for (let c = bounds.startCol; c <= bounds.endCol; c++) {
-      const ref = toCellRef(r, c)
-      sheet.cells.delete(ref)
-    }
-  }
+  // 不清空单元格 — 清空操作由粘贴时根据 uiStore.cutRange 执行
   return { bounds, tsv }
 }
 

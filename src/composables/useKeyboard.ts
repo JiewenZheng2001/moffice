@@ -2,7 +2,10 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { colToIndex, toCellRef } from '@/utils/columnUtils'
-import { copySelection, cutSelection, readClipboardForPaste, computePasteCells } from '@/services/clipboardService'
+import { copySelection, cutSelection, readClipboardForPaste, computePasteCells, getSelectionBounds } from '@/services/clipboardService'
+import type { SelectionBounds } from '@/services/clipboardService'
+import { CutPasteCommand } from '@/model/command'
+import { commandService } from '@/services/commandService'
 
 /**
  * 从单元格引用字符串解析出行列索引
@@ -73,7 +76,7 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
     }
   }
 
-  function handleKeydown(e: KeyboardEvent): void {
+  async function handleKeydown(e: KeyboardEvent): Promise<void> {
     // ---- 剪贴板快捷键（编辑模式和非编辑模式均生效） ----
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       const sheet = workbookStore.activeSheet
@@ -87,19 +90,33 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         e.preventDefault()
         const range = uiStore.getSelectionRange()
         copySelection(sheet, range.startRef, range.endRef)
+        // 复制模式：虚线框标记源区域（粘贴后保留，不被清除）
+        uiStore.setCopyRange({ startRef: range.startRef, endRef: range.endRef })
         return
       }
       if (e.key === 'x' || e.key === 'X') {
         if (isInputFocused) return
         e.preventDefault()
         const range = uiStore.getSelectionRange()
+        // 复制到剪贴板 + 进入剪切模式（Excel 虚线框）
         cutSelection(sheet, range.startRef, range.endRef)
+        uiStore.setCutRange({ startRef: range.startRef, endRef: range.endRef })
         return
       }
       if (e.key === 'v' || e.key === 'V') {
         if (isInputFocused) return
         e.preventDefault()
-        handlePaste()
+        const cutBounds = uiStore.cutRange
+          ? getSelectionBounds(uiStore.cutRange.startRef, uiStore.cutRange.endRef)
+          : null
+        // 剪切模式下先读剪贴板（供 CutPasteCommand undo 恢复用）
+        let savedTsv = ''
+        if (cutBounds) {
+          try { savedTsv = await navigator.clipboard.readText() } catch { /* ignore */ }
+        }
+        // 先粘贴，再清除剪切状态（clearCutRange 会同时清剪贴板）
+        await handlePaste(cutBounds, savedTsv)
+        if (cutBounds) uiStore.clearCutRange()
         return
       }
       // Ctrl+Shift+= → 在下方插入行
@@ -128,6 +145,12 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         workbookStore.redo()
         return
       }
+    }
+
+    // Escape → 退出剪切模式（无论焦点在哪）
+    if (e.key === 'Escape' && uiStore.cutRange) {
+      uiStore.clearCutRange()
+      return
     }
 
     // 如果事件来自输入框（编辑中），不处理方向键等导航 — 但允许 Tab/Enter/Escape 穿透
@@ -200,16 +223,34 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
     }
   }
 
-  /** 粘贴：从剪贴板读取 → 计算映射 → 批量写入 */
-  async function handlePaste(): Promise<void> {
+  /**
+   * 粘贴：
+   * - 普通粘贴：从剪贴板读取 → 映射到单元格 → 批量写入
+   * - 剪切模式粘贴：清空源格 + 粘贴目标 → 打包为一个原子命令（一次撤销还原所有）
+   */
+  async function handlePaste(sourceBounds: SelectionBounds | null, savedClipTsv = ''): Promise<void> {
     const sheet = workbookStore.activeSheet
     if (!sheet) return
     const active = uiStore.activeRef
     const data = await readClipboardForPaste()
     if (data.length === 0) return
-    const cells = computePasteCells(sheet, active, data)
-    workbookStore.pasteCells(cells)
+
+    const pasteCells = computePasteCells(sheet, active, data)
+
+    if (sourceBounds) {
+      const sourceRefs: string[] = []
+      for (let r = sourceBounds.startRow; r <= sourceBounds.endRow; r++) {
+        for (let c = sourceBounds.startCol; c <= sourceBounds.endCol; c++) {
+          sourceRefs.push(toCellRef(r, c))
+        }
+      }
+      commandService.execute(new CutPasteCommand(sheet, sourceRefs, pasteCells, savedClipTsv))
+    } else {
+      // 普通粘贴
+      workbookStore.pasteCells(pasteCells)
+    }
   }
+
 
   /** 先滚动再移动选区 —— 格子永远不会出现"出界闪现" */
   function navigateTo(row: number, col: number): void {

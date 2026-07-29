@@ -1,4 +1,5 @@
 import type { ICommand } from '@/model/command'
+import { CompoundCommand } from '@/model/command'
 
 /**
  * CommandService —— 命令模式调度中心
@@ -36,6 +37,15 @@ class CommandService {
   /** 获取当前重做栈长度（调试用） */
   get redoCount(): number {
     return this.redoStack.length
+  }
+
+  /**
+   * 执行一组命令，打包为一个原子操作（撤销/重做时整体处理）
+   */
+  executeBatch(commands: ICommand[], description?: string): void {
+    if (commands.length === 0) return
+    const compound = new CompoundCommand(commands, description)
+    this.execute(compound)
   }
 
   /**
