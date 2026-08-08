@@ -90,6 +90,25 @@ export const useWorkbookStore = defineStore('workbook', () => {
   }
 
   /**
+   * 用后端加载的工作簿替换整个当前工作簿（打开文件语义）
+   * - 保持传入的 id / name / sheets
+   * - 清空命令栈（加载不可撤销）
+   */
+  function replaceWorkbook(loaded: Workbook): void {
+    workbook.value = {
+      id: loaded.id,
+      name: loaded.name,
+      sheets: loaded.sheets,
+      activeSheetId: loaded.activeSheetId || loaded.sheets[0]?.id || '',
+    }
+    commandService.clear()
+    clipboardManager.exitAllModes()
+    if (workbook.value.activeSheetId) {
+      useFormulaStore().setActiveSheetContext(workbook.value.activeSheetId)
+    }
+  }
+
+  /**
    * 设置单元格值（通过命令模式，支持撤销）
    * 自动检测公式（以 "=" 开头），交由公式引擎计算
    * 自动将数值型字符串转为 number（如 "3" → 3）
@@ -177,6 +196,29 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const sheet = activeSheet.value
     if (!sheet) return
     commandService.execute(new PasteCommand(sheet, cells), { skipClipboardReset: true })
+  }
+
+  /**
+   * 清空选区内的所有单元格（Delete 键）
+   * 通过命令模式打包为原子操作，支持一次撤销全部恢复
+   * @returns 是否执行了清空
+   */
+  function clearCells(refs: CellRef[]): boolean {
+    const sheet = activeSheet.value
+    if (!sheet || refs.length === 0) return false
+    // 只清空有内容的单元格，避免空操作入栈
+    const targets = refs.filter((r) => sheet.cells.has(r))
+    if (targets.length === 0) return false
+    commandService.executeBatch(
+      targets.map((r) => new SetCellCommand(sheet, r, null)),
+      `Clear ${targets.length} cells`,
+    )
+    // 清空后删除对应依赖（公式格）
+    const formulaStore = useFormulaStore()
+    for (const r of targets) {
+      formulaStore.removeDeps(r)
+    }
+    return true
   }
 
   /** 在指定位置后插入一行 */
@@ -306,9 +348,11 @@ export const useWorkbookStore = defineStore('workbook', () => {
     addSheet,
     setActiveSheet,
     importSheets,
+    replaceWorkbook,
     setCellValue,
     addRows,
     pasteCells,
+    clearCells,
     insertRow,
     deleteRow,
     insertColumn,

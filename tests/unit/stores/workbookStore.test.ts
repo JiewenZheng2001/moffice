@@ -209,6 +209,27 @@ describe('workbookStore', () => {
     })
   })
 
+  describe('clearCells', () => {
+    it('批量清空并支持撤销', () => {
+      const store = freshStore()
+      store.setCellValue('A1', 1)
+      store.setCellValue('B2', 'x')
+      expect(store.clearCells(['A1', 'B2', 'C9'])).toBe(true)
+      expect(store.activeSheet!.cells.has('A1')).toBe(false)
+      expect(store.activeSheet!.cells.has('B2')).toBe(false)
+
+      store.undo()
+      expect(raw(store, 'A1')).toBe(1)
+      expect(raw(store, 'B2')).toBe('x')
+    })
+
+    it('无内容时返回 false 不入栈', () => {
+      const store = freshStore()
+      expect(store.clearCells(['A1', 'A2'])).toBe(false)
+      expect(commandService.canUndo).toBe(false)
+    })
+  })
+
   describe('applyFormat', () => {
     it('批量应用格式并支持撤销', () => {
       const store = freshStore()

@@ -13,6 +13,7 @@ import {
 import type { SelectionBounds } from '@/services/clipboardManager'
 import { CutPasteCommand } from '@/model/command'
 import { commandService } from '@/services/commandService'
+import { saveWorkbook } from '@/services/workbookService'
 
 const JUMP_ROWS = 5
 const JUMP_COLS = 1
@@ -148,6 +149,13 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         workbookStore.redo()
         return
       }
+      // Ctrl+S → 保存到后端
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        const sheet = workbookStore.activeSheet
+        if (sheet) void saveWorkbook(workbookStore.workbook)
+        return
+      }
       // Ctrl+B → 粗体切换
       if (e.key === 'b' || e.key === 'B') {
         if (isInputFocused) return
@@ -218,6 +226,12 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         case 'F2':
           e.preventDefault()
           uiStore.startEdit()
+          break
+        case 'Delete':
+        case 'Backspace':
+          e.preventDefault()
+          // 清空整个选区（原子命令，可撤销）
+          workbookStore.clearCells(getSelectedRefs())
           break
       }
       return
