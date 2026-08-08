@@ -1,6 +1,6 @@
 import type { Token } from './tokens'
 import { TokenType } from './tokens'
-import type { AstNode, NumberLiteralNode, StringLiteralNode, CellRefNode, RangeNode, FunctionCallNode, BinaryOpNode, UnaryOpNode } from './tokens'
+import type { AstNode, NumberLiteralNode, StringLiteralNode, CellRefNode, SheetRefNode, SheetRangeNode, RangeNode, FunctionCallNode, BinaryOpNode, UnaryOpNode } from './tokens'
 
 /**
  * 语法分析器 —— 递归下降解析，将 Token 流转换为 AST
@@ -145,6 +145,21 @@ export function parse(tokens: Token[]): AstNode {
           return { kind: 'range', startRef: t.value, endRef: end.value } as RangeNode
         }
         return { kind: 'cellRef', ref: t.value } as CellRefNode
+      }
+
+      case TokenType.SHEET_REF: {
+        advance()
+        // token 值形如 "Sheet2!A1" → 拆分为 sheet 名 + 引用
+        const bangIdx = t.value.indexOf('!')
+        const sheet = t.value.slice(0, bangIdx)
+        const ref = t.value.slice(bangIdx + 1)
+        // 跨 sheet 范围：Sheet2!A1:B5 → 后面跟 COLON + CELL_REF
+        if (current().type === TokenType.COLON) {
+          advance()
+          const end = expect(TokenType.CELL_REF)
+          return { kind: 'sheetRange', sheet, startRef: ref, endRef: end.value } as SheetRangeNode
+        }
+        return { kind: 'sheetRef', sheet, ref } as SheetRefNode
       }
 
       case TokenType.FUNCTION: {

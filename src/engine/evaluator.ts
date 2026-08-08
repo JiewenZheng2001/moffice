@@ -25,9 +25,21 @@ export function evaluate(node: AstNode, ctx: EvalContext): number | string | boo
       return val ?? 0
     }
 
+    case 'sheetRef': {
+      // 跨 sheet 引用：Sheet2!A1 → 传 sheet 名给上下文
+      const val = ctx.getCellValue(node.ref, node.sheet)
+      return val ?? 0
+    }
+
     case 'range': {
       // 范围引用单独出现时（如 =A1:B5），返回 #VALUE!
       const values = ctx.getRangeValues(node.startRef, node.endRef)
+      return values.length === 1 ? (values[0] ?? 0) : '#VALUE!'
+    }
+
+    case 'sheetRange': {
+      // 跨 sheet 范围：Sheet2!A1:B5
+      const values = ctx.getRangeValues(node.startRef, node.endRef, node.sheet)
       return values.length === 1 ? (values[0] ?? 0) : '#VALUE!'
     }
 
@@ -113,6 +125,9 @@ function flattenArgs(argNodes: AstNode[], ctx: EvalContext): (number | string | 
   for (const arg of argNodes) {
     if (arg.kind === 'range') {
       result.push(...ctx.getRangeValues(arg.startRef, arg.endRef))
+    } else if (arg.kind === 'sheetRange') {
+      // 跨 sheet 范围：传 sheet 名给上下文
+      result.push(...ctx.getRangeValues(arg.startRef, arg.endRef, arg.sheet))
     } else {
       const val = evaluate(arg, ctx)
       if (isError(val)) {

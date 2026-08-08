@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { commandService } from '@/services/commandService'
 import { clipboardManager } from '@/services/clipboardManager'
 import { CutPasteCommand } from '@/model/command'
+import { createCell } from '@/model/cell'
 
 // jsdom 无 clipboard，mock 掉
 beforeAll(() => {
@@ -329,6 +330,73 @@ describe('workbookStore', () => {
       uiStore.startEdit()
       expect(clipboardManager.isActive).toBe(false)
       expect(uiStore.isEditing).toBe(true)
+    })
+  })
+
+  describe('跨 Sheet 公式引用', () => {
+    it('Sheet2!A1 引用求值', () => {
+      const store = freshStore()
+      store.addSheet('Sheet2')
+      const s2 = store.workbook.sheets[1]
+      // 在 Sheet2 写入数据
+      const s2Cell = createCell('A1')
+      s2Cell.rawValue = 5
+      s2Cell.computedValue = 5
+      s2.cells.set('A1', s2Cell)
+
+      // 当前 sheet（Sheet1）公式引用 Sheet2!A1
+      store.setCellValue('B1', '=Sheet2!A1*2')
+      expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(10)
+    })
+
+    it('跨 sheet 联动：改 Sheet2 的 A1 → Sheet1 公式重算', () => {
+      const store = freshStore()
+      store.addSheet('Sheet2')
+      // Sheet1 公式引用 Sheet2!A1
+      store.setCellValue('B1', '=Sheet2!A1*2')
+      expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(0) // Sheet2!A1 空 = 0
+
+      // 切到 Sheet2 改 A1
+      const s2 = store.workbook.sheets[1]
+      store.setActiveSheet(s2.id)
+      store.setCellValue('A1', 10)
+
+      // 切回 Sheet1 验证联动
+      const s1 = store.workbook.sheets[0]
+      store.setActiveSheet(s1.id)
+      expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(20)
+    })
+
+    it('跨 sheet 范围求和：=SUM(Sheet2!A1:A2)', () => {
+      const store = freshStore()
+      store.addSheet('Sheet2')
+      const s2 = store.workbook.sheets[1]
+      store.setActiveSheet(s2.id)
+      store.setCellValue('A1', 1)
+      store.setCellValue('A2', 2)
+
+      const s1 = store.workbook.sheets[0]
+      store.setActiveSheet(s1.id)
+      store.setCellValue('C1', '=SUM(Sheet2!A1:A2)')
+      expect(store.activeSheet!.cells.get('C1')!.computedValue).toBe(3)
+    })
+
+    it('跨 sheet 公式支持撤销重做', () => {
+      const store = freshStore()
+      store.addSheet('Sheet2')
+      const s2 = store.workbook.sheets[1]
+      store.setActiveSheet(s2.id)
+      store.setCellValue('A1', 7)
+      const s1 = store.workbook.sheets[0]
+      store.setActiveSheet(s1.id)
+
+      store.setCellValue('B1', '=Sheet2!A1+1')
+      expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(8)
+
+      store.undo()
+      expect(store.activeSheet!.cells.has('B1')).toBe(false)
+      store.redo()
+      expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(8)
     })
   })
 })

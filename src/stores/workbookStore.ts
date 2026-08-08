@@ -30,8 +30,15 @@ export const useWorkbookStore = defineStore('workbook', () => {
   )
 
   // ---- Actions ----
+  /** 自增计数器：防止同一毫秒内创建多个 sheet 时 id 冲突 */
+  let sheetSeq = 0
+  function nextSheetId(): string {
+    sheetSeq++
+    return `sheet-${Date.now()}-${sheetSeq}`
+  }
+
   function addSheet(name: string): void {
-    const id = `sheet-${Date.now()}`
+    const id = nextSheetId()
     const sheet: Sheet = {
       id,
       name,
@@ -45,19 +52,20 @@ export const useWorkbookStore = defineStore('workbook', () => {
     workbook.value.sheets.push(sheet)
     if (!workbook.value.activeSheetId) {
       workbook.value.activeSheetId = id
-      // 首个 Sheet 创建时同步依赖图上下文
-      useFormulaStore().setActiveSheetContext(id)
+      // 首个 Sheet 创建时同步依赖图上下文（含名字，deps key 用）
+      useFormulaStore().setActiveSheetContext(id, name)
     }
   }
 
   function setActiveSheet(sheetId: string): void {
+    const target = workbook.value.sheets.find((s) => s.id === sheetId)
     workbook.value.activeSheetId = sheetId
     // 切换 Sheet → 清空命令栈（避免 Ctrl+Z 作用于错误的 Sheet）
     commandService.clear()
     // 退出剪贴板模式（虚线框属于旧 Sheet 的选区）
     clipboardManager.exitAllModes()
     // 同步公式依赖图上下文（不同 Sheet 的依赖图 key 隔离）
-    useFormulaStore().setActiveSheetContext(sheetId)
+    useFormulaStore().setActiveSheetContext(sheetId, target?.name)
   }
 
   /**
@@ -87,7 +95,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     workbook.value.activeSheetId = newSheets[0].id
     commandService.clear()
     clipboardManager.exitAllModes()
-    useFormulaStore().setActiveSheetContext(newSheets[0].id)
+    useFormulaStore().setActiveSheetContext(newSheets[0].id, newSheets[0].name)
   }
 
   /**
@@ -105,7 +113,8 @@ export const useWorkbookStore = defineStore('workbook', () => {
     commandService.clear()
     clipboardManager.exitAllModes()
     if (workbook.value.activeSheetId) {
-      useFormulaStore().setActiveSheetContext(workbook.value.activeSheetId)
+      const active = workbook.value.sheets.find((s) => s.id === workbook.value.activeSheetId)
+      useFormulaStore().setActiveSheetContext(workbook.value.activeSheetId, active?.name)
     }
   }
 
@@ -131,7 +140,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     // 检测公式：以 "=" 开头的字符串
     if (typeof value === 'string' && value.startsWith('=')) {
       const formulaStore = useFormulaStore()
-      const result = formulaStore.compute(value, sheet)
+      const result = formulaStore.compute(value, sheet, workbook.value)
       let computedValue = result.value
 
       // 如果不是循环引用，更新依赖图；若检测到环，结果改为 #CIRCULAR!
@@ -145,17 +154,8 @@ export const useWorkbookStore = defineStore('workbook', () => {
       // 用计算后的值创建命令（commandService.execute 会自动退出剪贴板模式）
       commandService.execute(new SetCellCommand(sheet, ref, computedValue, value))
 
-      // 传播重算：重新计算所有依赖此格的公式
-      const affected = formulaStore.getAffectedCells(ref)
-      for (const affectedRef of affected) {
-        const cell = sheet.cells.get(affectedRef)
-        if (cell && cell.formula) {
-          const r = formulaStore.compute(cell.formula, sheet)
-          cell.computedValue = r.value
-          cell.error = typeof r.value === 'string' && r.value.startsWith('#') ? r.value : null
-          formulaStore.setDeps(affectedRef, r.deps)
-        }
-      }
+      // 传播重算：重新计算所有依赖此格的公式（含跨 sheet）
+      recalcDependents(ref)
       return
     }
 
@@ -169,15 +169,32 @@ export const useWorkbookStore = defineStore('workbook', () => {
     commandService.execute(new SetCellCommand(sheet, ref, value))
 
     // 传播重算（抹掉公式后，引用此格的公式需要反映变化）
+    recalcDependents(ref)
+  }
+
+  /**
+   * 重算所有依赖指定单元格的公式（含跨 sheet）
+   * getAffectedCells 返回带 sheet 名前缀的 key（"Sheet1!B1"），
+   * 按名字解析目标 sheet 后重算其公式
+   */
+  function recalcDependents(ref: CellRef): void {
     const formulaStore = useFormulaStore()
     const affected = formulaStore.getAffectedCells(ref)
-    for (const affectedRef of affected) {
-      const cell = sheet.cells.get(affectedRef)
+    for (const key of affected) {
+      // 解析 "Sheet1!B1" → sheet 名 + 裸 ref
+      const bang = key.indexOf('!')
+      const targetSheet = bang >= 0
+        ? workbook.value.sheets.find((s) => s.name === key.slice(0, bang))
+        : activeSheet.value
+      const targetRef = bang >= 0 ? key.slice(bang + 1) : key
+      if (!targetSheet) continue
+
+      const cell = targetSheet.cells.get(targetRef)
       if (cell && cell.formula) {
-        const r = formulaStore.compute(cell.formula, sheet)
+        const r = formulaStore.compute(cell.formula, targetSheet, workbook.value)
         cell.computedValue = r.value
         cell.error = typeof r.value === 'string' && r.value.startsWith('#') ? r.value : null
-        formulaStore.setDeps(affectedRef, r.deps)
+        formulaStore.setDeps(targetRef, r.deps)
       }
     }
   }
@@ -292,7 +309,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     clipboardManager.restoreMode('cut', range)
   }
 
-  /** undo/redo 后重算受影响的公式（含依赖传播） */
+  /** undo/redo 后重算受影响的公式（含跨 sheet 依赖传播） */
   function recalcAffected(command: { getAffectedRefs(): string[]; needsRecalc?(): boolean }): void {
     // 纯格式命令不改变值 → 跳过重算
     if (command.needsRecalc?.() === false) return
@@ -301,36 +318,50 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const formulaStore = useFormulaStore()
     const refs = command.getAffectedRefs()
 
+    /** 解析 deps key（"Sheet1!B1"）→ 目标 sheet；裸 ref 用当前 sheet */
+    function resolveTarget(key: string, currentSheet: Sheet): { sheet: Sheet; ref: string } | null {
+      const bang = key.indexOf('!')
+      if (bang < 0) return { sheet: currentSheet, ref: key }
+      const targetSheet = workbook.value.sheets.find((s) => s.name === key.slice(0, bang))
+      if (!targetSheet) return null
+      return { sheet: targetSheet, ref: key.slice(bang + 1) }
+    }
+
     if (refs.length === 0) {
-      // 行列操作：做全量公式重算
-      for (const [ref, cell] of sheet.cells) {
-        if (cell.formula) {
-          const r = formulaStore.compute(cell.formula, sheet)
-          cell.computedValue = r.value
-          cell.error = typeof r.value === 'string' && r.value.startsWith('#') ? r.value : null
-          formulaStore.setDeps(ref, r.deps)
+      // 行列操作：做全量公式重算（含跨 sheet 引用的公式）
+      for (const targetSheet of workbook.value.sheets) {
+        for (const [ref, cell] of targetSheet.cells) {
+          if (cell.formula) {
+            const r = formulaStore.compute(cell.formula, targetSheet, workbook.value)
+            cell.computedValue = r.value
+            cell.error = typeof r.value === 'string' && r.value.startsWith('#') ? r.value : null
+            formulaStore.setDeps(ref, r.deps)
+          }
         }
       }
     } else {
-      // 精确重算：遍历受影响的格 + 其依赖
+      // 精确重算：遍历受影响的格 + 其依赖（跨 sheet）
       const visited = new Set<string>()
       const queue = [...refs]
       while (queue.length > 0) {
-        const ref = queue.shift()!
-        if (visited.has(ref)) continue
-        visited.add(ref)
+        const key = queue.shift()!
+        if (visited.has(key)) continue
+        visited.add(key)
+
+        const target = resolveTarget(key, sheet)
+        if (!target) continue
 
         // 如果该格有公式，重新求值
-        const cell = sheet.cells.get(ref)
+        const cell = target.sheet.cells.get(target.ref)
         if (cell && cell.formula) {
-          const r = formulaStore.compute(cell.formula, sheet)
+          const r = formulaStore.compute(cell.formula, target.sheet, workbook.value)
           cell.computedValue = r.value
           cell.error = typeof r.value === 'string' && r.value.startsWith('#') ? r.value : null
-          formulaStore.setDeps(ref, r.deps)
+          formulaStore.setDeps(target.ref, r.deps)
         }
 
-        // BFS：该格的依赖者也需要重算
-        const deps = formulaStore.getAffectedCells(ref)
+        // BFS：该格的依赖者也需要重算（key 含 sheet 名，跨 sheet 自然传播）
+        const deps = formulaStore.getAffectedCells(target.ref)
         for (const d of deps) {
           if (!visited.has(d)) queue.push(d)
         }

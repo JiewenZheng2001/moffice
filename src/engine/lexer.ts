@@ -91,11 +91,23 @@ export function tokenize(input: string): Token[] {
       tokens.push({ type: TokenType.EQ, value: '=', pos }); pos++; continue
     }
 
-    // 字母或 $ 开头 → 函数名 / 单元格引用（支持 $A$1 绝对引用）
+    // 字母或 $ 开头 → 函数名 / 单元格引用 / 跨 sheet 引用（支持 $A$1 绝对引用）
     if (isAlpha(ch) || ch === '$') {
       const start = pos
       while (pos < src.length && (isAlphaNumeric(src[pos]) || src[pos] === '$')) pos++
       const word = src.slice(start, pos)
+
+      // 跨 sheet 引用：标识符后跟 ! → "Sheet2!A1"
+      // 需要 sheet 名 + 引用两部分都合法，且后面没有函数调用特征
+      if (pos < src.length && src[pos] === '!' && pos + 1 < src.length && isAlphaNumeric(src[pos + 1])) {
+        const refStart = pos + 1
+        let refEnd = refStart
+        while (refEnd < src.length && (isAlphaNumeric(src[refEnd]) || src[refEnd] === '$')) refEnd++
+        const sheetRef = src.slice(start, refEnd)
+        tokens.push({ type: TokenType.SHEET_REF, value: sheetRef, pos: start })
+        pos = refEnd
+        continue
+      }
 
       // 判断是函数还是单元格引用：看后面是否紧跟 (
       const nextNonSpace = skipSpace(src, pos)

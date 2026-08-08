@@ -64,15 +64,15 @@ describe('formulaStore', () => {
 
   it('setDeps 建立依赖，getAffectedCells 传播', () => {
     const store = useFormulaStore()
-    store.setActiveSheetContext('s1')
+    store.setActiveSheetContext('s1', 'Sheet1')
     store.setDeps('B1', ['A1'])
     store.setDeps('C1', ['B1'])
-    expect(store.getAffectedCells('A1').sort()).toEqual(['B1', 'C1'])
+    expect(store.getAffectedCells('A1').sort()).toEqual(['Sheet1!B1', 'Sheet1!C1'])
   })
 
   it('removeDeps 断开依赖', () => {
     const store = useFormulaStore()
-    store.setActiveSheetContext('s1')
+    store.setActiveSheetContext('s1', 'Sheet1')
     store.setDeps('B1', ['A1'])
     store.removeDeps('B1')
     expect(store.getAffectedCells('A1')).toEqual([])
@@ -82,32 +82,32 @@ describe('formulaStore', () => {
     it('两个 sheet 的 A1 互不干扰（key 隔离）', () => {
       const store = useFormulaStore()
       // Sheet1: B1 依赖 A1
-      store.setActiveSheetContext('sheet-1')
+      store.setActiveSheetContext('sheet-1', 'Sheet1')
       store.setDeps('B1', ['A1'])
       // Sheet2: C1 依赖 A1
-      store.setActiveSheetContext('sheet-2')
+      store.setActiveSheetContext('sheet-2', 'Sheet2')
       store.setDeps('C1', ['A1'])
 
-      // 在 sheet-1 上下文中，A1 只影响 B1
-      store.setActiveSheetContext('sheet-1')
-      expect(store.getAffectedCells('A1')).toEqual(['B1'])
+      // 在 sheet-1 上下文中，A1 只影响 B1（key 带 sheet 名前缀）
+      store.setActiveSheetContext('sheet-1', 'Sheet1')
+      expect(store.getAffectedCells('A1')).toEqual(['Sheet1!B1'])
       // 在 sheet-2 上下文中，A1 只影响 C1
-      store.setActiveSheetContext('sheet-2')
-      expect(store.getAffectedCells('A1')).toEqual(['C1'])
+      store.setActiveSheetContext('sheet-2', 'Sheet2')
+      expect(store.getAffectedCells('A1')).toEqual(['Sheet2!C1'])
     })
 
     it('一个 sheet 的循环引用不影响另一个 sheet', () => {
       const store = useFormulaStore()
-      store.setActiveSheetContext('sheet-1')
+      store.setActiveSheetContext('sheet-1', 'Sheet1')
       store.setDeps('A1', ['B1'])
       // sheet-1 检测到环
       expect(store.setDeps('B1', ['A1'])).toBe('#CIRCULAR!')
 
       // sheet-2 中相同引用建立单向依赖不受 sheet-1 的环影响
-      store.setActiveSheetContext('sheet-2')
+      store.setActiveSheetContext('sheet-2', 'Sheet2')
       expect(store.setDeps('A1', ['B1'])).toBeNull()
       // sheet-2 的 A1 → B1 正常传播
-      expect(store.getAffectedCells('B1')).toEqual(['A1'])
+      expect(store.getAffectedCells('B1')).toEqual(['Sheet2!A1'])
     })
 
     it('recalculate 只重算当前 sheet 的公式', () => {

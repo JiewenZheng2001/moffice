@@ -6,6 +6,8 @@ export const TokenType = {
   STRING: 'STRING',
   CELL_REF: 'CELL_REF',
   RANGE: 'RANGE',
+  /** 跨 sheet 引用：Sheet2!A1 */
+  SHEET_REF: 'SHEET_REF',
   FUNCTION: 'FUNCTION',
   PLUS: 'PLUS',
   MINUS: 'MINUS',
@@ -41,7 +43,9 @@ export type AstNode =
   | NumberLiteralNode
   | StringLiteralNode
   | CellRefNode
+  | SheetRefNode
   | RangeNode
+  | SheetRangeNode
   | FunctionCallNode
   | BinaryOpNode
   | UnaryOpNode
@@ -61,8 +65,23 @@ export interface CellRefNode {
   ref: string       // 如 "A1", "$B$2"
 }
 
+/** 跨 sheet 单元格引用：Sheet2!A1 */
+export interface SheetRefNode {
+  kind: 'sheetRef'
+  sheet: string     // 如 "Sheet2"
+  ref: string       // 如 "A1"
+}
+
 export interface RangeNode {
   kind: 'range'
+  startRef: string
+  endRef: string
+}
+
+/** 跨 sheet 范围引用：Sheet2!A1:B5 */
+export interface SheetRangeNode {
+  kind: 'sheetRange'
+  sheet: string     // 如 "Sheet2"
   startRef: string
   endRef: string
 }
@@ -99,8 +118,8 @@ export type FormulaErrorType =
 
 /** 求值上下文：提供单元格取值能力，由外部注入 */
 export interface EvalContext {
-  /** 获取单元格的 computedValue */
-  getCellValue(ref: string): number | string | null
+  /** 获取单元格的 computedValue；sheetName 为空表示当前 sheet */
+  getCellValue(ref: string, sheetName?: string): number | string | null
   /** 展开范围引用，返回该范围内所有非空单元格的 computedValue */
-  getRangeValues(startRef: string, endRef: string): (number | string | null)[]
+  getRangeValues(startRef: string, endRef: string, sheetName?: string): (number | string | null)[]
 }

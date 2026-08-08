@@ -121,6 +121,16 @@ function collectRefs(node: AstNode, refs: string[]): void {
     case 'cellRef':
       refs.push(node.ref)
       break
+    case 'sheetRef':
+      // 跨 sheet 引用：deps key 用完整 "Sheet2!A1"（与 formulaStore 的 sheetId 隔离策略配合）
+      refs.push(`${node.sheet}!${node.ref}`)
+      break
+    case 'sheetRange':
+      // 跨 sheet 范围展开，同样带 sheet 前缀
+      for (const r of expandRange(node.startRef, node.endRef)) {
+        refs.push(`${node.sheet}!${r}`)
+      }
+      break
     case 'range':
       // 展开范围引用为单个单元格引用
       const expanded = expandRange(node.startRef, node.endRef)
