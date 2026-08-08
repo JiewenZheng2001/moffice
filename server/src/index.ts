@@ -24,7 +24,21 @@ import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
 const app = express()
 const PORT = Number(process.env.PORT ?? 3000)
 
-app.use(cors())
+/**
+ * CORS：
+ * - 生产：允许前端域名（CORS_ORIGIN 环境变量，逗号分隔多域名）
+ * - 开发：允许所有来源（cors 默认行为）
+ */
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+app.use(cors(
+  allowedOrigins.length > 0
+    ? { origin: allowedOrigins }
+    : undefined,
+))
 app.use(express.json({ limit: '10mb' })) // 工作簿 JSON 可能较大，放宽限制
 
 // 请求体校验：非对象直接拒绝

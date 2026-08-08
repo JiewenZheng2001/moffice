@@ -37,11 +37,18 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * API 基地址：
+ * - 开发环境为空字符串 → 走 Vite proxy（/api → localhost:3000）
+ * - 生产环境由构建时 VITE_API_BASE 注入（如 https://moffice-api.onrender.com）
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? ''
+
 /** 请求封装：自动附加 token，统一处理错误与 JSON 解析 */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`/api${path}`, {
+    res = await fetch(`${API_BASE}/api${path}`, {
       headers: {
         'Content-Type': 'application/json',
         // 已登录则附加 JWT（后端 requireAuth 校验）

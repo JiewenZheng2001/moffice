@@ -1,0 +1,22 @@
+# Render 蓝图：一键部署后端（https://render.com）
+# 用法：Render → New Blueprint → 连接 GitHub 仓库 → 选择 moffice
+services:
+  - type: web
+    name: moffice-api
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: pnpm install
+    startCommand: pnpm start
+    envVars:
+      # 前端域名（部署 Vercel 后填入实际地址，多个用逗号分隔）
+      - key: CORS_ORIGIN
+        sync: false
+      # JWT 密钥：必填！部署后手动设置一个随机长字符串
+      - key: JWT_SECRET
+        sync: false
+    disk:
+      # SQLite 数据持久化（Render 免费层磁盘，重启不丢数据）
+      name: moffice-data
+      mountPath: /app/data
+      sizeGB: 1

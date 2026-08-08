@@ -23,11 +23,14 @@ export class AuthError extends Error {
   }
 }
 
+/** API 基地址（与 workbookService 一致）：开发走 proxy，生产由 VITE_API_BASE 注入 */
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? ''
+
 /** 发起认证请求（register / login 共用） */
 async function authRequest(path: string, username: string, password: string): Promise<AuthResult> {
   let res: Response
   try {
-    res = await fetch(`/api/auth${path}`, {
+    res = await fetch(`${API_BASE}/api/auth${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
