@@ -393,6 +393,66 @@ describe('InsertColumnCommand / DeleteColumnCommand', () => {
   })
 })
 
+describe('CommandService 连续格式命令合并', () => {
+  let sheet: Sheet
+  beforeEach(() => {
+    sheet = createSheet()
+    commandService.clear()
+    setRaw(sheet, 'A1', 1)
+  })
+
+  it('连续格式命令合并为一个（撤销一次恢复全部）', () => {
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { bold: true }))
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { italic: true }))
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { underline: true }))
+
+    // 三次操作只产生一个命令
+    expect(commandService.undoCount).toBe(1)
+    // 效果全部应用
+    expect(sheet.cells.get('A1')!.format).toMatchObject({
+      bold: true, italic: true, underline: true,
+    })
+
+    // 撤销一次全部恢复
+    commandService.undo()
+    expect(sheet.cells.get('A1')!.format).toEqual({})
+  })
+
+  it('不同目标的格式命令不合并', () => {
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { bold: true }))
+    commandService.execute(new SetCellFormatCommand(sheet, ['B1'], { bold: true }))
+    expect(commandService.undoCount).toBe(2)
+  })
+
+  it('合并命令可重做（redo 应用合并后的完整效果）', () => {
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { bold: true }))
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { italic: true }))
+    commandService.undo()
+    expect(sheet.cells.get('A1')!.format).toEqual({})
+
+    commandService.redo()
+    expect(sheet.cells.get('A1')!.format).toMatchObject({ bold: true, italic: true })
+  })
+
+  it('格式命令与数据命令不合并（数据命令正常入栈）', () => {
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { bold: true }))
+    commandService.execute(new SetCellCommand(sheet, 'A1', 99))
+    expect(commandService.undoCount).toBe(2)
+  })
+
+  it('合并后其他命令入栈仍正常（不干扰后续撤销顺序）', () => {
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { bold: true }))
+    commandService.execute(new SetCellFormatCommand(sheet, ['A1'], { italic: true }))
+    commandService.execute(new SetCellCommand(sheet, 'B1', 'x'))
+
+    // 撤销顺序：先撤 B1 数据，再撤格式（一次全撤）
+    commandService.undo()
+    expect(read(sheet, 'B1')).toBeNull()
+    commandService.undo()
+    expect(sheet.cells.get('A1')!.format).toEqual({})
+  })
+})
+
 describe('CommandService 命令栈', () => {
   let sheet: Sheet
   beforeEach(() => {

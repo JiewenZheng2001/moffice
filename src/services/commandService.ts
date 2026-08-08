@@ -1,5 +1,5 @@
 import type { ICommand } from '@/model/command'
-import { CompoundCommand } from '@/model/command'
+import { CompoundCommand, SetCellFormatCommand } from '@/model/command'
 import { clipboardManager } from './clipboardManager'
 
 /**
@@ -55,11 +55,26 @@ class CommandService {
    * - 超出 MAX_STACK 时移除最旧的命令
    * - 默认退出剪切/复制模式；粘贴类命令可传 skipClipboardReset 跳过
    *   （复制模式粘贴后保留虚线框是 Excel 行为，由调用方管理模式）
+   * - 连续格式命令自动合并（相同目标）→ 撤销一次恢复全部
    */
   execute(command: ICommand, opts?: { skipClipboardReset?: boolean }): void {
     // 数据变更 → 退出所有剪贴板模式（虚线框 + 剪贴板缓存）
     if (!opts?.skipClipboardReset) {
       clipboardManager.exitAllModes()
+    }
+
+    // 合并：栈顶格式命令与当前命令目标相同 → 应用效果后并入栈顶，不新增
+    // 解决"连续点击边框/加粗需按多次撤销"与"撤销后看起来没变"的体验问题
+    const top = this.undoStack[this.undoStack.length - 1]
+    if (
+      top instanceof SetCellFormatCommand
+      && command instanceof SetCellFormatCommand
+      && top.mergeableWith(command)
+    ) {
+      command.execute() // 先应用本次格式效果
+      top.merge(command) // 合并 patch，undo 时恢复最早状态
+      this.redoStack = [] // 新操作使重做历史失效
+      return
     }
 
     command.execute()

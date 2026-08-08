@@ -246,6 +246,12 @@ const BORDER_STYLES: Record<string, string> = {
 /**
  * 生成单元格的内联样式（应用 CellFormat）
  * 优先级高于 CSS 类中的默认网格线，用户设置的边框会覆盖网格线
+ *
+ * 边框渲染采用"邻居合并"策略，解决相邻单元格边框重叠变粗的问题：
+ * - 每条边只由一个单元格负责绘制（约定：左/上单元格优先）
+ * - 内部右/下边：由右/下邻居的 borderLeft/borderTop 绘制（自己画 left/top）
+ * - 表格最右列/最下行：没有邻居，自己补绘 borderRight/borderBottom
+ * - 单元格显示时：left/top 取"自己 borderLeft/top ?? 左/上邻居 borderRight/bottom"
  */
 function cellStyle(row: number, col: number): Record<string, string> {
   const fmt = getCell(row, col).format
@@ -261,12 +267,28 @@ function cellStyle(row: number, col: number): Record<string, string> {
   if (fmt.textAlign) style.textAlign = fmt.textAlign
   if (fmt.verticalAlign) style.verticalAlign = fmt.verticalAlign
 
-  // 四边边框：borderTop 覆盖默认顶部网格线，以此类推
-  const borderKeys = ['borderTop', 'borderBottom', 'borderLeft', 'borderRight'] as const
-  for (const key of borderKeys) {
-    const b = fmt[key]
+  // 邻居格式（虚拟滚动下 getCell 只读 Map，无渲染开销）
+  const leftNeighbor = col > 0 ? getCell(row, col - 1).format : null
+  const topNeighbor = row > 0 ? getCell(row - 1, col).format : null
+  const hasRightNeighbor = col + 1 < colCount.value
+  const hasBottomNeighbor = row + 1 < rowCount.value
+
+  // 左/上：自己优先，否则继承邻居的右/下边框（共享边只画一次）
+  const left = fmt.borderLeft ?? leftNeighbor?.borderRight
+  const top = fmt.borderTop ?? topNeighbor?.borderBottom
+  // 右/下：有邻居时不画（由邻居的 left/top 负责）；无邻居（边界）时补绘
+  const right = hasRightNeighbor ? null : fmt.borderRight
+  const bottom = hasBottomNeighbor ? null : fmt.borderBottom
+
+  const borders: Array<[keyof CellFormat, string, CellFormat['borderLeft'] | null]> = [
+    ['borderLeft', 'borderLeft', left ?? null],
+    ['borderTop', 'borderTop', top ?? null],
+    ['borderRight', 'borderRight', right ?? null],
+    ['borderBottom', 'borderBottom', bottom ?? null],
+  ]
+  for (const [, cssKey, b] of borders) {
     if (b) {
-      style[key] = `${BORDER_WIDTHS[b.style]} ${BORDER_STYLES[b.style]} ${b.color}`
+      style[cssKey] = `${BORDER_WIDTHS[b.style]} ${BORDER_STYLES[b.style]} ${b.color}`
     }
   }
   return style

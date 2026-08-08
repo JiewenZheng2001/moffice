@@ -404,6 +404,27 @@ export class SetCellFormatCommand implements ICommand {
   needsRecalc(): boolean {
     return false
   }
+
+  /**
+   * 判断能否与下一个格式命令合并（相同目标单元格集合）
+   * 连续对同一批单元格做格式操作（如加粗→加边框）应合并为一个命令，
+   * 否则用户需要按多次 Ctrl+Z，且撤销后"看起来没变"（恢复到上一次格式状态）
+   */
+  mergeableWith(next: SetCellFormatCommand): boolean {
+    if (this.snapshots.length !== next.snapshots.length) return false
+    const myRefs = new Set(this.snapshots.map((s) => s.ref))
+    return next.snapshots.every((s) => myRefs.has(s.ref))
+  }
+
+  /**
+   * 合并下一个格式命令的 patch（后者优先）
+   * - 自己的快照保留（最早的旧状态）→ undo 一次恢复全部
+   * - formatPatch 取并集（后设置的字段覆盖先设置的）
+   * 注意：调用方需先执行 next.execute() 再调用 merge（应用效果 + 更新 patch）
+   */
+  merge(next: SetCellFormatCommand): void {
+    this.formatPatch = { ...this.formatPatch, ...next.formatPatch }
+  }
 }
 
 // ═══════════════════════════════════════════════

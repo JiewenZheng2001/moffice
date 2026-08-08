@@ -79,6 +79,51 @@ describe('SpreadsheetGrid', () => {
     expect(b2.attributes('style')).toContain('font-weight: bold')
   })
 
+  it('边框邻居合并：A1 右边框由 B1 左边显示（不重叠）', () => {
+    const store = useWorkbookStore()
+    const sheet = store.activeSheet!
+    // A1 和 B1 都设置边框（模拟用户选中两格加边框）
+    const border = { color: '#000000', style: 'thin' as const }
+    sheet.cells.get('A1')!.format = {
+      borderTop: border, borderBottom: border, borderLeft: border, borderRight: border,
+    }
+    const b1 = createCell('B1')
+    b1.format = {
+      borderTop: border, borderBottom: border, borderLeft: border, borderRight: border,
+    }
+    sheet.cells.set('B1', b1)
+
+    const wrapper = mount(SpreadsheetGrid)
+    // 行结构：row-header | A1 | B1（row-header 是第 1 个 child）
+    const a1 = wrapper.find('tbody tr:nth-child(1) .cell:nth-child(2)')
+    const b1El = wrapper.find('tbody tr:nth-child(1) .cell:nth-child(3)')
+
+    // 内部共享边只画一次：A1 不画右边框（交给 B1 的左边框）
+    expect(a1.attributes('style')).not.toContain('border-right')
+    // B1 画左边框（自己的 borderLeft）
+    expect(b1El.attributes('style')).toContain('border-left')
+  })
+
+  it('边框邻居合并：只有 A1 有右边框时 B1 继承显示', () => {
+    const store = useWorkbookStore()
+    const sheet = store.activeSheet!
+    sheet.cells.get('A1')!.format = {
+      borderRight: { color: '#ff0000', style: 'medium' as const },
+    }
+
+    const wrapper = mount(SpreadsheetGrid)
+    // 行结构：row-header | A1 | B1
+    const a1 = wrapper.find('tbody tr:nth-child(1) .cell:nth-child(2)')
+    const b1 = wrapper.find('tbody tr:nth-child(1) .cell:nth-child(3)')
+
+    // A1 不重复画右边框（有邻居）
+    expect(a1.attributes('style')).not.toContain('border-right')
+    // B1 左边继承 A1 的右边框样式（红色 medium）
+    expect(b1.attributes('style')).toContain('border-left')
+    expect(b1.attributes('style')).toContain('2px')
+    expect(b1.attributes('style')).toContain('rgb(255, 0, 0)')
+  })
+
   it('激活格高亮', async () => {
     const uiStore = useUiStore()
     uiStore.selectCell('B1')
