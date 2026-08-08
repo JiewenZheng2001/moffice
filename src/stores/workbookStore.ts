@@ -16,8 +16,9 @@ import { useFormulaStore } from './formulaStore'
  */
 export const useWorkbookStore = defineStore('workbook', () => {
   // ---- State ----
+  // id 用唯一值：多用户场景下避免所有新工作簿都叫 "default" 互相覆盖
   const workbook = ref<Workbook>({
-    id: 'default',
+    id: `wb-${Date.now()}`,
     name: '未命名表格',
     sheets: [],
     activeSheetId: '',

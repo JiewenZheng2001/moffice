@@ -1,25 +1,37 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import SpreadsheetGrid from './grid/SpreadsheetGrid.vue'
 import FormulaBar from './formula-bar/FormulaBar.vue'
 import Toolbar from './toolbar/Toolbar.vue'
 import FormatToolbar from './toolbar/FormatToolbar.vue'
+import AuthBar from './auth/AuthBar.vue'
 import SheetTabs from './sheet-tabs/SheetTabs.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { gridScrollRef } from '@/composables/useGridScrollRef'
+import { isLoggedIn } from '@/services/authService'
 
 // 激活全局键盘导航（方向键/Tab/Enter/F2/Esc）+ 预滚动
 useKeyboard(gridScrollRef)
+
+/** 登录态变化时刷新保存按钮可用性 */
+const authed = ref(isLoggedIn())
+function onAuthChange(): void {
+  authed.value = isLoggedIn()
+}
 </script>
 
 <template>
   <div class="app-shell">
+    <!-- 登录栏（登录后才能保存到云端） -->
+    <AuthBar @authed="onAuthChange" />
+
     <!-- 公式栏 -->
     <div class="formula-bar-wrapper">
       <FormulaBar />
     </div>
 
-    <!-- 工具栏（文件操作） -->
-    <Toolbar />
+    <!-- 工具栏（文件操作 + 云端保存） -->
+    <Toolbar :authed="authed" />
 
     <!-- 格式工具栏（字体/颜色/对齐/数字格式） -->
     <FormatToolbar />

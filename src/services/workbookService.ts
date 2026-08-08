@@ -1,5 +1,6 @@
 import type { Workbook } from '@/model/types'
 import { deserializeWorkbook, serializeWorkbook } from '@/model/serialization'
+import { getToken } from './authService'
 
 /**
  * 工作簿持久化服务 —— 与后端 REST API 通信
@@ -36,12 +37,16 @@ export class ApiError extends Error {
   }
 }
 
-/** 请求封装：统一处理错误与 JSON 解析 */
+/** 请求封装：自动附加 token，统一处理错误与 JSON 解析 */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // 已登录则附加 JWT（后端 requireAuth 校验）
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+      },
       ...init,
     })
   } catch {

@@ -14,6 +14,7 @@ import type { SelectionBounds } from '@/services/clipboardManager'
 import { CutPasteCommand } from '@/model/command'
 import { commandService } from '@/services/commandService'
 import { saveWorkbook } from '@/services/workbookService'
+import { isLoggedIn } from '@/services/authService'
 
 const JUMP_ROWS = 5
 const JUMP_COLS = 1
@@ -149,9 +150,10 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         workbookStore.redo()
         return
       }
-      // Ctrl+S → 保存到后端
+      // Ctrl+S → 保存到后端（需登录）
       if (e.key === 's' || e.key === 'S') {
         e.preventDefault()
+        if (!isLoggedIn()) return
         const sheet = workbookStore.activeSheet
         if (sheet) void saveWorkbook(workbookStore.workbook)
         return

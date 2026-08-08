@@ -6,6 +6,9 @@ import { importXlsx, importCsv } from '@/services/importService'
 import { saveWorkbook, loadWorkbook, listWorkbooks, renameWorkbook, deleteWorkbook, ApiError } from '@/services/workbookService'
 import type { WorkbookMeta } from '@/services/workbookService'
 
+/** 是否已登录（由 AppShell 传入，控制云端按钮可用性） */
+const props = defineProps<{ authed: boolean }>()
+
 const workbookStore = useWorkbookStore()
 const fileInput = ref<HTMLInputElement | null>(null)
 
@@ -62,6 +65,8 @@ watch(
       skipNextAutoSave = false
       return
     }
+    // 未登录不自动保存（无 token，保存必然 401）
+    if (!props.authed) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
@@ -208,9 +213,14 @@ async function handleExportCsv(): Promise<void> {
     </div>
     <div class="toolbar-divider" />
     <div class="toolbar-group">
-      <!-- 后端保存/打开 -->
+      <!-- 后端保存/打开（需登录） -->
       <div class="open-wrap">
-        <button class="tb-btn" title="打开云端工作簿" @click="toggleOpenPanel">
+        <button
+          class="tb-btn"
+          :disabled="!authed"
+          :title="authed ? '打开云端工作簿' : '请先登录'"
+          @click="toggleOpenPanel"
+        >
           <span>📂 打开</span>
         </button>
         <!-- 打开面板：工作簿列表 -->
@@ -238,14 +248,19 @@ async function handleExportCsv(): Promise<void> {
       </div>
       <button
         class="tb-btn"
-        :disabled="saveState === 'saving'"
-        title="保存到云端 Ctrl+S"
+        :disabled="saveState === 'saving' || !authed"
+        :title="authed ? '保存到云端 Ctrl+S' : '请先登录'"
         @click="handleSave"
       >
         <span>{{ saveState === 'saving' ? '⏳ 保存中' : '💾 保存' }}</span>
       </button>
       <!-- 保存状态提示 -->
       <span
+        v-if="!authed"
+        class="save-status"
+      >未登录，仅本地编辑</span>
+      <span
+        v-else
         class="save-status"
         :class="{
           'save-status--ok': saveState === 'saved',
@@ -255,7 +270,6 @@ async function handleExportCsv(): Promise<void> {
         {{ saveState === 'saved' ? '已保存' : saveState === 'error' ? saveError : saveState === 'saving' ? '保存中…' : '' }}
       </span>
     </div>
-    <div class="toolbar-divider" />
     <div class="toolbar-group">
       <button class="tb-btn" @click="handleImportClick">
         <span>📥 导入</span>

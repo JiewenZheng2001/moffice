@@ -35,7 +35,7 @@ describe('Toolbar 自动保存', () => {
 
   it('数据变更后 2 秒自动保存', async () => {
     const store = useWorkbookStore()
-    mount(Toolbar)
+    mount(Toolbar, { props: { authed: true } })
 
     store.setCellValue('A1', 1)
     await flushPromises()
@@ -53,7 +53,7 @@ describe('Toolbar 自动保存', () => {
 
   it('连续变更 debounce：只保存一次（始终保存最新状态）', async () => {
     const store = useWorkbookStore()
-    mount(Toolbar)
+    mount(Toolbar, { props: { authed: true } })
 
     // 1 秒内连续变更 3 次
     store.setCellValue('A1', 1)
@@ -71,12 +71,21 @@ describe('Toolbar 自动保存', () => {
 
   it('组件卸载时清理计时器', async () => {
     const store = useWorkbookStore()
-    const wrapper = mount(Toolbar)
+    const wrapper = mount(Toolbar, { props: { authed: true } })
     store.setCellValue('A1', 1)
     await flushPromises()
     wrapper.unmount()
     await vi.advanceTimersByTimeAsync(3000)
     // 卸载后计时器被清理，不会触发保存
+    expect(saveMock).not.toHaveBeenCalled()
+  })
+
+  it('未登录（authed=false）不自动保存', async () => {
+    const store = useWorkbookStore()
+    mount(Toolbar, { props: { authed: false } })
+    store.setCellValue('A1', 1)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
     expect(saveMock).not.toHaveBeenCalled()
   })
 })
