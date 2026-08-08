@@ -181,10 +181,16 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
       }
     }
 
-    // Escape → 退出剪切/复制模式（无论焦点在哪）
-    if (e.key === 'Escape' && clipboardManager.isActive) {
-      clipboardManager.exitAllModes()
-      return
+    // Escape → 退出剪切/复制模式 / 格式刷（无论焦点在哪）
+    if (e.key === 'Escape') {
+      if (clipboardManager.isActive) {
+        clipboardManager.exitAllModes()
+        return
+      }
+      if (uiStore.isPainting) {
+        uiStore.exitPainting()
+        return
+      }
     }
 
     // 如果事件来自输入框（编辑中），不处理方向键等导航 — 但允许 Tab/Enter/Escape 穿透

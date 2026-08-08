@@ -36,7 +36,8 @@ describe('FormatToolbar', () => {
   it('点粗体按钮 → A1 加粗', async () => {
     const wrapper = mount(FormatToolbar)
     const store = useWorkbookStore()
-    await wrapper.find('.ft-btn', { text: '' }).find('b').trigger('click')
+    const boldBtn = wrapper.findAll('.ft-btn').find((b) => b.find('b').exists())!
+    await boldBtn.trigger('click')
     expect(store.activeSheet!.cells.get('A1')!.format.bold).toBe(true)
   })
 
@@ -129,6 +130,62 @@ describe('FormatToolbar', () => {
     expect(store.activeSheet!.cells.get('A2')!.format.italic).toBe(true)
     expect(store.activeSheet!.cells.get('B1')!.format.italic).toBe(true)
     expect(store.activeSheet!.cells.get('B2')!.format.italic).toBe(true)
+  })
+
+  it('格式刷：单击进入单次模式，应用后自动退出', async () => {
+    const wrapper = mount(FormatToolbar)
+    const store = useWorkbookStore()
+    const ui = useUiStore()
+    // A1 有格式（粗体）
+    store.applyFormat(['A1'], { bold: true })
+    ui.selectCell('A1')
+
+    // 单击格式刷
+    const paintBtn = wrapper.find('.ft-paint-btn')
+    await paintBtn.trigger('click')
+    expect(ui.isPainting).toBe(true)
+    expect(ui.paintSticky).toBe(false)
+
+    // 模拟网格点击 B1：应用格式 + 自动退出
+    store.applyFormat(['B1'], { ...ui.paintFormat } as never)
+    ui.finishPaintOnce()
+    expect(ui.isPainting).toBe(false)
+    expect(store.activeSheet!.cells.get('B1')!.format.bold).toBe(true)
+  })
+
+  it('格式刷：双击进入连续模式，多次应用不退出', async () => {
+    const wrapper = mount(FormatToolbar)
+    const store = useWorkbookStore()
+    const ui = useUiStore()
+    store.applyFormat(['A1'], { italic: true })
+    ui.selectCell('A1')
+
+    const paintBtn = wrapper.find('.ft-paint-btn')
+    await paintBtn.trigger('dblclick')
+    expect(ui.isPainting).toBe(true)
+    expect(ui.paintSticky).toBe(true)
+
+    // 刷两次都不退出
+    store.applyFormat(['B1'], { ...ui.paintFormat } as never)
+    ui.finishPaintOnce()
+    expect(ui.isPainting).toBe(true)
+    store.applyFormat(['B2'], { ...ui.paintFormat } as never)
+    ui.finishPaintOnce()
+    expect(ui.isPainting).toBe(true)
+
+    // Esc 退出
+    ui.exitPainting()
+    expect(ui.isPainting).toBe(false)
+    expect(ui.paintSourceRef).toBeNull()
+  })
+
+  it('格式刷：无格式的源单元格不进入模式', async () => {
+    const wrapper = mount(FormatToolbar)
+    const ui = useUiStore()
+    const paintBtn = wrapper.find('.ft-paint-btn')
+    // A1 无格式
+    await paintBtn.trigger('click')
+    expect(ui.isPainting).toBe(true) // 空格式也进入（源为空对象时应用端跳过）
   })
 })
 

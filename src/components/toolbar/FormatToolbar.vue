@@ -9,6 +9,25 @@ import type { CellFormat } from '@/model/types'
 const workbookStore = useWorkbookStore()
 const uiStore = useUiStore()
 
+// ---- 格式刷 ----
+/** 单击格式刷：单次模式（刷一次自动退出） */
+function onPaintClick(): void {
+  const sheet = workbookStore.activeSheet
+  const ref = uiStore.activeRef
+  if (!sheet || !ref) return
+  const fmt = sheet.cells.get(ref)?.format ?? {}
+  uiStore.startPainting(ref, false, fmt as unknown as Record<string, unknown>)
+}
+
+/** 双击格式刷：连续模式（可刷多次，Esc 退出） */
+function onPaintDblClick(): void {
+  const sheet = workbookStore.activeSheet
+  const ref = uiStore.activeRef
+  if (!sheet || !ref) return
+  const fmt = sheet.cells.get(ref)?.format ?? {}
+  uiStore.startPainting(ref, true, fmt as unknown as Record<string, unknown>)
+}
+
 /** 预设字体族 */
 const FONT_FAMILIES = [
   '宋体',
@@ -166,6 +185,17 @@ function onNumberFormatChange(e: Event): void {
       <option v-for="s in FONT_SIZES" :key="s" :value="s">{{ s }}</option>
     </select>
 
+    <!-- 格式刷（单击=刷一次，双击=连续刷） -->
+    <button
+      class="ft-btn ft-paint-btn"
+      :class="{ 'ft-btn--active': uiStore.isPainting, 'ft-paint-btn--sticky': uiStore.paintSticky }"
+      :title="uiStore.isPainting
+        ? (uiStore.paintSticky ? '连续模式（Esc 退出）' : '单击目标格应用格式（Esc 取消）')
+        : '格式刷（双击可连续使用）'"
+      @click="onPaintClick"
+      @dblclick.prevent="onPaintDblClick"
+    >🖌️</button>
+
     <!-- 粗体/斜体/下划线 -->
     <button
       class="ft-btn"
@@ -286,6 +316,11 @@ function onNumberFormatChange(e: Event): void {
 
 .ft-font-size {
   width: 52px;
+}
+
+/* 格式刷按钮：连续模式加深边框提示 */
+.ft-paint-btn--sticky {
+  border-style: dashed;
 }
 
 .ft-btn {

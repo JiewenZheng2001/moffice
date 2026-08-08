@@ -37,6 +37,46 @@ export const useUiStore = defineStore('ui', () => {
     startSize: number
   } | null>(null)
 
+  // ---- 格式刷状态 ----
+  /**
+   * 格式刷模式：null = 未激活；true = 单次模式（刷一次后自动退出）；
+   * false = 连续模式（可刷多次，Esc 退出）。
+   * 源格式快照在激活时由组件读取保存（formatPainterRef），
+   * 这里只存模式标记 + 源单元格引用。
+   */
+  const isPainting = ref(false)
+  /** 连续模式（双击格式刷）为 true，单击为 false */
+  const paintSticky = ref(false)
+  /** 格式刷源单元格（取该格的 format） */
+  const paintSourceRef = ref<CellRef | null>(null)
+  /** 源格式快照（进入模式时由组件传入，应用时直接读取，避免跨组件传引用） */
+  const paintFormat = ref<Record<string, unknown>>({})
+
+  /** 进入格式刷模式 */
+  function startPainting(sourceRef: CellRef, sticky: boolean, sourceFormat: Record<string, unknown>): void {
+    // 格式刷与其他交互互斥：退出剪贴板模式
+    clipboardManager.exitAllModes()
+    paintSourceRef.value = sourceRef
+    paintSticky.value = sticky
+    paintFormat.value = { ...sourceFormat }
+    isPainting.value = true
+  }
+
+  /** 单次刷完自动退出；连续模式保持 */
+  function finishPaintOnce(): void {
+    if (!paintSticky.value) {
+      exitPainting()
+    }
+  }
+
+  /** 退出格式刷模式 */
+  function exitPainting(): void {
+    isPainting.value = false
+    paintSticky.value = false
+    paintSourceRef.value = null
+    paintFormat.value = {}
+  }
+
   function selectCell(ref: CellRef): void {
     activeRef.value = ref
     selection.value = { startRef: ref, endRef: ref }
@@ -150,5 +190,7 @@ export const useUiStore = defineStore('ui', () => {
     resizeState, startResize, updateResize, finishResize,
     cutRange, copyRange,
     setCutRange, setCopyRange, clearCutRange, clearCopyRange, clearAllRanges,
+    isPainting, paintSticky, paintSourceRef, paintFormat,
+    startPainting, finishPaintOnce, exitPainting,
   }
 })

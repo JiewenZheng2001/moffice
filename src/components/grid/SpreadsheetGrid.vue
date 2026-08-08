@@ -75,13 +75,27 @@ async function handleCellDblClick(row: number, col: number): Promise<void> {
   input?.focus()
 }
 
-/** 单元格鼠标按下：先保存当前编辑，再开始选区 */
+/** 单元格鼠标按下：格式刷模式应用格式，否则开始选区 */
 function onCellMouseDown(row: number, col: number): void {
   // 点击单元格时让任何输入框失焦（避免复制粘贴被 isInputFocused 拦截）
   if (document.activeElement?.tagName === 'INPUT') {
     ;(document.activeElement as HTMLElement).blur()
   }
   saveCurrentEdit()
+
+  // 格式刷模式：把源格式应用到目标格，不移动选区
+  if (uiStore.isPainting) {
+    const target = toCellRef(row, col)
+    const fmt = uiStore.paintFormat
+    if (Object.keys(fmt).length > 0) {
+      // 应用格式（命令模式，支持撤销）
+      workbookStore.applyFormat([target], fmt as never)
+    }
+    // 单次模式自动退出（连续模式保持）
+    uiStore.finishPaintOnce()
+    return
+  }
+
   uiStore.startRangeSelection(toCellRef(row, col))
 }
 
@@ -369,7 +383,13 @@ watch(
 </script>
 
 <template>
-  <div ref="scrollContainer" class="grid-scroll" @mouseup="uiStore.finishSelection()" @mouseleave="uiStore.finishSelection()">
+  <div
+    ref="scrollContainer"
+    class="grid-scroll"
+    :class="{ 'grid-scroll--painting': uiStore.isPainting }"
+    @mouseup="uiStore.finishSelection()"
+    @mouseleave="uiStore.finishSelection()"
+  >
     <table class="grid-table">
       <thead>
         <tr>
@@ -453,6 +473,15 @@ watch(
   flex: 1;
   overflow: auto;
   position: relative;
+}
+
+/* 格式刷模式：光标变为刷子提示 */
+.grid-scroll--painting {
+  cursor: copy;
+}
+
+.grid-scroll--painting .cell {
+  cursor: copy;
 }
 
 .grid-table {
