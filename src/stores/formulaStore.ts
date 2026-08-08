@@ -1,15 +1,44 @@
 import { defineStore } from 'pinia'
+import { ref } from 'vue'
 import { DependencyGraph, computeFormula } from '@/engine'
 import type { EvalContext, FormulaErrorType } from '@/engine'
 import type { Sheet } from '@/model/types'
+import { parseRef, indexToCol } from '@/utils/columnUtils'
 
 /**
  * 公式 Store —— 管理公式引擎的对外接口
  * - 持有依赖图实例
  * - 提供公式计算和依赖传播
+ *
+ * 依赖图隔离：不同 Sheet 的相同单元格引用（如 Sheet1!A1 和 Sheet2!A1）
+ * 在依赖图中必须互不干扰。内部使用 `${sheetId}:${ref}` 作为 key，
+ * 对外仍暴露纯 ref（调用方零感知）。
  */
 export const useFormulaStore = defineStore('formula', () => {
   const deps = new DependencyGraph()
+
+  /** 当前依赖图所属的 Sheet 上下文（由 workbookStore 切换时同步） */
+  const activeSheetId = ref('')
+
+  /** 依赖图内部 key：sheetId + ref，隔离不同 Sheet 的同名单元格 */
+  function depKey(ref: string): string {
+    return `${activeSheetId.value}:${ref}`
+  }
+
+  /** 从内部 key 还原纯 ref（去掉 sheetId 前缀） */
+  function depKeyToRef(key: string): string {
+    const idx = key.indexOf(':')
+    return idx >= 0 ? key.slice(idx + 1) : key
+  }
+
+  /**
+   * 同步当前依赖图上下文（workbookStore 切换 Sheet 时调用）
+   * 注意：切换 Sheet 后旧 Sheet 的依赖关系仍然保留在图中（key 不同），
+   * 切回时公式传播依然正确。
+   */
+  function setActiveSheetContext(sheetId: string): void {
+    activeSheetId.value = sheetId
+  }
 
   /**
    * 计算一个公式并返回结果
@@ -29,21 +58,22 @@ export const useFormulaStore = defineStore('formula', () => {
    * @returns 如果是循环引用返回 "#CIRCULAR!"，否则 null
    */
   function setDeps(cellRef: string, depRefs: string[]): FormulaErrorType | null {
-    return deps.setDeps(cellRef, depRefs)
+    return deps.setDeps(depKey(cellRef), depRefs.map((r) => depKey(r)))
   }
 
   /**
    * 移除指定单元格的依赖关系（删除单元格或清除公式时调用）
    */
   function removeDeps(cellRef: string): void {
-    deps.removeDeps(cellRef)
+    deps.removeDeps(depKey(cellRef))
   }
 
   /**
-   * 获取指定单元格变更后需要重算的所有单元格
+   * 获取指定单元格变更后需要重算的所有单元格（仅当前 Sheet 内的依赖）
    */
   function getAffectedCells(cellRef: string): string[] {
-    return deps.getAffectedCells(cellRef)
+    // 内部 key 带 sheetId 前缀，返回前还原为纯 ref
+    return deps.getAffectedCells(depKey(cellRef)).map((k) => depKeyToRef(k))
   }
 
   /**
@@ -59,12 +89,12 @@ export const useFormulaStore = defineStore('formula', () => {
     cell.error = typeof result.value === 'string' && result.value.startsWith('#') ? result.value : null
 
     // 更新依赖
-    deps.setDeps(cellRef, result.deps)
+    deps.setDeps(depKey(cellRef), result.deps.map((r) => depKey(r)))
 
     // 传播：继续重算依赖此格的单元格
-    const affected = deps.getAffectedCells(cellRef)
-    for (const ref of affected) {
-      recalculate(ref, sheet)
+    const affected = deps.getAffectedCells(depKey(cellRef))
+    for (const key of affected) {
+      recalculate(depKeyToRef(key), sheet)
     }
   }
 
@@ -74,6 +104,7 @@ export const useFormulaStore = defineStore('formula', () => {
     removeDeps,
     getAffectedCells,
     recalculate,
+    setActiveSheetContext,
   }
 })
 
@@ -104,9 +135,10 @@ function createEvalContext(sheet: Sheet): EvalContext {
 
       for (let r = startRow; r <= endRow; r++) {
         for (let c = startCol; c <= endCol; c++) {
-          const ref = `${colToLetter(c)}${r + 1}`
+          const ref = `${indexToCol(c)}${r + 1}`
           const cell = sheet.cells.get(ref)
-          if (cell) {
+          // 与 getCellValue 一致：错误格按空单元格处理（不参与计算）
+          if (cell && !cell.error) {
             const val = cell.computedValue
             if (typeof val === 'number' || typeof val === 'string') {
               values.push(val)
@@ -117,31 +149,4 @@ function createEvalContext(sheet: Sheet): EvalContext {
       return values
     },
   }
-}
-
-function parseRef(ref: string): { col: number; row: number } | null {
-  const m = ref.match(/^([A-Z]+)(\d+)$/i)
-  if (!m) return null
-  return {
-    col: colToIndex(m[1]),
-    row: parseInt(m[2], 10) - 1,
-  }
-}
-
-function colToIndex(col: string): number {
-  let result = 0
-  for (let i = 0; i < col.length; i++) {
-    result = result * 26 + (col.charCodeAt(i) - 64)
-  }
-  return result - 1
-}
-
-function colToLetter(col: number): string {
-  let result = ''
-  let n = col
-  while (n >= 0) {
-    result = String.fromCharCode(65 + (n % 26)) + result
-    n = Math.floor(n / 26) - 1
-  }
-  return result
 }

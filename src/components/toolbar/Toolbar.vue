@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { exportXlsx, exportCsv } from '@/services/exportService'
-import { importXlsx, importCsv, applyImport } from '@/services/importService'
+import { importXlsx, importCsv } from '@/services/importService'
 
 const workbookStore = useWorkbookStore()
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -32,10 +32,8 @@ async function handleFileChange(e: Event): Promise<void> {
     }
 
     if (result.sheets.length > 0) {
-      const sheet = workbookStore.activeSheet
-      if (sheet) {
-        applyImport(sheet, result.sheets[0])
-      }
+      // 多 sheet 全量导入（替换整个工作簿，等价于"打开文件"）
+      workbookStore.importSheets(result.sheets)
     }
   } catch (err) {
     console.error('导入失败:', err)
@@ -46,11 +44,11 @@ async function handleFileChange(e: Event): Promise<void> {
   }
 }
 
-/** 导出 XLSX */
+/** 导出 XLSX（导出工作簿的全部 sheets） */
 async function handleExportXlsx(): Promise<void> {
-  const sheet = workbookStore.activeSheet
-  if (!sheet) return
-  await exportXlsx([sheet])
+  const sheets = workbookStore.workbook.sheets
+  if (sheets.length === 0) return
+  await exportXlsx(sheets)
 }
 
 /** 导出 CSV */

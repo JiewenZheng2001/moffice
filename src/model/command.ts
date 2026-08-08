@@ -1,4 +1,4 @@
-import type { CellRef, CellValue, Sheet } from './types'
+import type { CellFormat, CellRef, CellValue, Sheet } from './types'
 import { createCell } from './cell'
 import { colToIndex, toCellRef } from '@/utils/columnUtils'
 
@@ -21,6 +21,11 @@ export interface ICommand {
   getAffectedRefs(): CellRef[]
   /** 如果是剪切命令，返回源区域引用（用于 undo 后恢复虚线框 UI 状态） */
   getSourceRefs?(): CellRef[]
+  /**
+   * 是否需要触发公式依赖重算
+   * 默认 true；纯格式命令返回 false（格式不改变值，跳过不必要的重算）
+   */
+  needsRecalc?(): boolean
 }
 
 // ═══════════════════════════════════════════════
@@ -67,6 +72,7 @@ export class SetCellCommand implements ICommand {
   private formula: string | null
   private oldValue: CellValue
   private oldFormula: string | null
+  private oldError: string | null
   private hadOldCell: boolean
 
   /** @param formulaStr 如果是公式，传入公式字符串（如 "=SUM(A1:A3)"）；否则为 null */
@@ -82,28 +88,37 @@ export class SetCellCommand implements ICommand {
       this.hadOldCell = true
       this.oldValue = oldCell.rawValue
       this.oldFormula = oldCell.formula
+      this.oldError = oldCell.error
     } else {
       this.hadOldCell = false
       this.oldValue = null
       this.oldFormula = null
+      this.oldError = null
     }
+  }
+
+  /** 值以 # 开头（如 #DIV/0!、#CIRCULAR!）→ 视为错误 */
+  private static errorOf(value: CellValue): string | null {
+    return typeof value === 'string' && value.startsWith('#') ? value : null
   }
 
   execute(): void {
     if (this.newValue === null || this.newValue === '') {
       this.sheet.cells.delete(this.ref)
     } else {
+      const error = SetCellCommand.errorOf(this.newValue)
       const existing = this.sheet.cells.get(this.ref)
       if (existing) {
         existing.rawValue = this.formula ?? this.newValue
         existing.computedValue = this.newValue
         existing.formula = this.formula
-        existing.error = null
+        existing.error = error
       } else {
         const cell = createCell(this.ref)
         cell.rawValue = this.formula ?? this.newValue
         cell.computedValue = this.newValue
         cell.formula = this.formula
+        cell.error = error
         this.sheet.cells.set(this.ref, cell)
       }
     }
@@ -117,7 +132,7 @@ export class SetCellCommand implements ICommand {
       cell.rawValue = this.oldValue
       cell.computedValue = this.oldValue
       cell.formula = this.oldFormula
-      cell.error = null
+      cell.error = this.oldError
       this.sheet.cells.set(this.ref, cell)
     }
   }
@@ -312,6 +327,82 @@ export class CutPasteCommand implements ICommand {
   /** 返回剪切源区域（用于 undo 后恢复虚线框 UI） */
   getSourceRefs(): CellRef[] {
     return this.sourceSnapshots.map((s) => s.ref)
+  }
+}
+
+// ═══════════════════════════════════════════════
+// 批量设置单元格格式（字体/颜色/对齐/边框等）
+// ═══════════════════════════════════════════════
+
+/** 格式快照：撤销时恢复的每个单元格的旧格式 */
+interface FormatSnapshot {
+  ref: CellRef
+  format: CellFormat
+}
+
+export class SetCellFormatCommand implements ICommand {
+  readonly description: string
+  private sheet: Sheet
+  private refs: CellRef[]
+  /** 要应用的格式片段（Partial，未提供的字段保持不变） */
+  private formatPatch: Partial<CellFormat>
+  private snapshots: FormatSnapshot[] = []
+
+  /**
+   * @param sheet 目标 Sheet
+   * @param refs 应用格式的所有单元格
+   * @param formatPatch 格式片段（如 { bold: true }，只改粗体，其他不动）
+   */
+  constructor(sheet: Sheet, refs: CellRef[], formatPatch: Partial<CellFormat>) {
+    this.sheet = sheet
+    this.refs = refs
+    this.formatPatch = formatPatch
+    this.description = `FORMAT ${refs.length} cells`
+
+    // 构造时深拷贝每个目标单元格的旧格式，撤销时按原样恢复
+    for (const ref of refs) {
+      const cell = sheet.cells.get(ref)
+      this.snapshots.push({
+        ref,
+        // 深拷贝：嵌套对象（border*）必须复制，避免 undo 时引用同一对象。
+        // 注意不能用 structuredClone：Pinia 中的 format 是 reactive Proxy，无法克隆
+        format: cell ? JSON.parse(JSON.stringify(cell.format)) : {},
+      })
+    }
+  }
+
+  execute(): void {
+    for (const ref of this.refs) {
+      // 格式可以应用到空单元格：需要时惰性创建 Cell（无值）
+      let cell = this.sheet.cells.get(ref)
+      if (!cell) {
+        cell = createCell(ref)
+        this.sheet.cells.set(ref, cell)
+      }
+      // 合并格式片段
+      cell.format = { ...cell.format, ...this.formatPatch }
+    }
+  }
+
+  undo(): void {
+    for (const snap of this.snapshots) {
+      const cell = this.sheet.cells.get(snap.ref)
+      if (!cell) continue
+      cell.format = snap.format
+      // 如果单元格原本不存在（仅因格式创建）且现在无值，删除它
+      if (cell.rawValue === null && cell.computedValue === null && !cell.formula) {
+        this.sheet.cells.delete(snap.ref)
+      }
+    }
+  }
+
+  getAffectedRefs(): CellRef[] {
+    // 格式变化不改变值 → 无需触发依赖重算
+    return []
+  }
+
+  needsRecalc(): boolean {
+    return false
   }
 }
 

@@ -1,23 +1,18 @@
 import { onMounted, onUnmounted, type Ref } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useWorkbookStore } from '@/stores/workbookStore'
-import { colToIndex, toCellRef } from '@/utils/columnUtils'
-import { copySelection, cutSelection, readClipboardForPaste, computePasteCells, getSelectionBounds } from '@/services/clipboardService'
-import type { SelectionBounds } from '@/services/clipboardService'
+import { parseRef, toCellRef } from '@/utils/columnUtils'
+import type { CellFormat } from '@/model/types'
+import {
+  clipboardManager,
+  serializeSelection,
+  computePasteCells,
+  getSelectionBounds,
+  parseTSV,
+} from '@/services/clipboardManager'
+import type { SelectionBounds } from '@/services/clipboardManager'
 import { CutPasteCommand } from '@/model/command'
 import { commandService } from '@/services/commandService'
-
-/**
- * 从单元格引用字符串解析出行列索引
- * "A1" → { row: 0, col: 0 }, "B3" → { row: 2, col: 1 }
- */
-function parseCellRef(ref: string): { row: number; col: number } | null {
-  const match = ref.match(/^([A-Z]+)(\d+)$/i)
-  if (!match) return null
-  const col = colToIndex(match[1].toUpperCase())
-  const row = parseInt(match[2], 10) - 1
-  return { row, col }
-}
 
 const JUMP_ROWS = 5
 const JUMP_COLS = 1
@@ -82,54 +77,62 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
       const sheet = workbookStore.activeSheet
       if (!sheet) return
 
-      // 如果焦点在任何输入框内，让浏览器原生处理剪贴板，不走自定义单元格逻辑
+      // 如果焦点在任何输入框内，让浏览器原生处理剪贴板
       const isInputFocused = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA'
 
       if (e.key === 'c' || e.key === 'C') {
         if (isInputFocused) return
         e.preventDefault()
         const range = uiStore.getSelectionRange()
-        copySelection(sheet, range.startRef, range.endRef)
-        // 复制模式：虚线框标记源区域（粘贴后保留，不被清除）
-        uiStore.setCopyRange({ startRef: range.startRef, endRef: range.endRef })
+        const bounds = getSelectionBounds(range.startRef, range.endRef)
+        const tsv = serializeSelection(sheet, bounds)
+        clipboardManager.startCopy(
+          { startRef: range.startRef, endRef: range.endRef },
+          tsv,
+        )
         return
       }
       if (e.key === 'x' || e.key === 'X') {
         if (isInputFocused) return
         e.preventDefault()
         const range = uiStore.getSelectionRange()
-        // 复制到剪贴板 + 进入剪切模式（Excel 虚线框）
-        cutSelection(sheet, range.startRef, range.endRef)
-        uiStore.setCutRange({ startRef: range.startRef, endRef: range.endRef })
+        const bounds = getSelectionBounds(range.startRef, range.endRef)
+        const tsv = serializeSelection(sheet, bounds)
+        clipboardManager.startCut(
+          { startRef: range.startRef, endRef: range.endRef },
+          tsv,
+        )
         return
       }
       if (e.key === 'v' || e.key === 'V') {
         if (isInputFocused) return
         e.preventDefault()
-        const cutBounds = uiStore.cutRange
-          ? getSelectionBounds(uiStore.cutRange.startRef, uiStore.cutRange.endRef)
+
+        // 判断是否为剪切模式粘贴（需要清空源格）
+        const isCutPaste = clipboardManager.isCutMode
+        const sourceBounds = isCutPaste && clipboardManager.sourceRange
+          ? getSelectionBounds(clipboardManager.sourceRange.startRef, clipboardManager.sourceRange.endRef)
           : null
-        // 剪切模式下先读剪贴板（供 CutPasteCommand undo 恢复用）
-        let savedTsv = ''
-        if (cutBounds) {
-          try { savedTsv = await navigator.clipboard.readText() } catch { /* ignore */ }
+
+        await handlePaste(sourceBounds)
+
+        // 剪切粘贴后退出剪切模式（清空虚线框 + 剪贴板）
+        if (isCutPaste) {
+          clipboardManager.exitCutMode()
         }
-        // 先粘贴，再清除剪切状态（clearCutRange 会同时清剪贴板）
-        await handlePaste(cutBounds, savedTsv)
-        if (cutBounds) uiStore.clearCutRange()
         return
       }
       // Ctrl+Shift+= → 在下方插入行
       if (e.key === '+' || e.key === '=') {
         e.preventDefault()
-        const parsed = parseCellRef(uiStore.activeRef)
+        const parsed = parseRef(uiStore.activeRef)
         if (parsed) workbookStore.insertRow(parsed.row)
         return
       }
       // Ctrl+- → 删除当前行
       if (e.key === '-') {
         e.preventDefault()
-        const parsed = parseCellRef(uiStore.activeRef)
+        const parsed = parseRef(uiStore.activeRef)
         if (parsed) workbookStore.deleteRow(parsed.row)
         return
       }
@@ -145,11 +148,32 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         workbookStore.redo()
         return
       }
+      // Ctrl+B → 粗体切换
+      if (e.key === 'b' || e.key === 'B') {
+        if (isInputFocused) return
+        e.preventDefault()
+        toggleBold()
+        return
+      }
+      // Ctrl+I → 斜体切换
+      if (e.key === 'i' || e.key === 'I') {
+        if (isInputFocused) return
+        e.preventDefault()
+        toggleItalic()
+        return
+      }
+      // Ctrl+U → 下划线切换
+      if (e.key === 'u' || e.key === 'U') {
+        if (isInputFocused) return
+        e.preventDefault()
+        toggleUnderline()
+        return
+      }
     }
 
-    // Escape → 退出剪切模式（无论焦点在哪）
-    if (e.key === 'Escape' && uiStore.cutRange) {
-      uiStore.clearCutRange()
+    // Escape → 退出剪切/复制模式（无论焦点在哪）
+    if (e.key === 'Escape' && clipboardManager.isActive) {
+      clipboardManager.exitAllModes()
       return
     }
 
@@ -159,7 +183,7 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
     }
 
     const active = uiStore.activeRef
-    const parsed = parseCellRef(active)
+    const parsed = parseRef(active)
     if (!parsed) return
 
     const { row, col } = parsed
@@ -208,7 +232,6 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
           break
         case 'Enter':
           // 编辑模式 Enter → 确认并下移，交由 GridBody 的 input 处理
-          // 这里不做默认行为，让 input 的 @keydown.enter 处理
           break
         case 'Tab':
           e.preventDefault()
@@ -217,40 +240,84 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
           break
         case 'F2':
           e.preventDefault()
-          // 编辑中按 F2 不做操作
           break
       }
     }
   }
 
+  /** 获取当前选区内的所有单元格引用 */
+  function getSelectedRefs(): string[] {
+    const range = uiStore.getSelectionRange()
+    const bounds = getSelectionBounds(range.startRef, range.endRef)
+    const refs: string[] = []
+    for (let r = bounds.startRow; r <= bounds.endRow; r++) {
+      for (let c = bounds.startCol; c <= bounds.endCol; c++) {
+        refs.push(toCellRef(r, c))
+      }
+    }
+    return refs
+  }
+
+  /** 当前选区激活格的格式（读当前值用于 toggle） */
+  function getActiveCellFormat(): CellFormat {
+    const sheet = workbookStore.activeSheet
+    const cell = sheet?.cells.get(uiStore.activeRef)
+    return cell?.format ?? {}
+  }
+
+  /** Ctrl+B：粗体开关（以激活格当前状态为准，反转为新值） */
+  function toggleBold(): void {
+    const fmt = getActiveCellFormat()
+    workbookStore.applyFormat(getSelectedRefs(), { bold: !fmt.bold })
+  }
+
+  /** Ctrl+I：斜体开关 */
+  function toggleItalic(): void {
+    const fmt = getActiveCellFormat()
+    workbookStore.applyFormat(getSelectedRefs(), { italic: !fmt.italic })
+  }
+
+  /** Ctrl+U：下划线开关 */
+  function toggleUnderline(): void {
+    const fmt = getActiveCellFormat()
+    workbookStore.applyFormat(getSelectedRefs(), { underline: !fmt.underline })
+  }
+
   /**
    * 粘贴：
    * - 普通粘贴：从剪贴板读取 → 映射到单元格 → 批量写入
-   * - 剪切模式粘贴：清空源格 + 粘贴目标 → 打包为一个原子命令（一次撤销还原所有）
+   * - 剪切模式粘贴：清空源格 + 粘贴目标 → 打包为一个原子命令
    */
-  async function handlePaste(sourceBounds: SelectionBounds | null, savedClipTsv = ''): Promise<void> {
+  async function handlePaste(sourceBounds: SelectionBounds | null): Promise<void> {
     const sheet = workbookStore.activeSheet
     if (!sheet) return
     const active = uiStore.activeRef
-    const data = await readClipboardForPaste()
+
+    // 从系统剪贴板读取（降级时用 clipboardManager 缓存）
+    const clipText = await clipboardManager.readSystemClipboard()
+    const data = parseTSV(clipText)
     if (data.length === 0) return
 
     const pasteCells = computePasteCells(sheet, active, data)
 
     if (sourceBounds) {
+      // 剪切模式粘贴 → 原子命令（清空源格 + 写入目标）
+      // skipClipboardReset：剪切模式的退出由调用方（Ctrl+V 分支）统一处理
       const sourceRefs: string[] = []
       for (let r = sourceBounds.startRow; r <= sourceBounds.endRow; r++) {
         for (let c = sourceBounds.startCol; c <= sourceBounds.endCol; c++) {
           sourceRefs.push(toCellRef(r, c))
         }
       }
-      commandService.execute(new CutPasteCommand(sheet, sourceRefs, pasteCells, savedClipTsv))
+      commandService.execute(
+        new CutPasteCommand(sheet, sourceRefs, pasteCells, clipboardManager.tsvCache),
+        { skipClipboardReset: true },
+      )
     } else {
       // 普通粘贴
       workbookStore.pasteCells(pasteCells)
     }
   }
-
 
   /** 先滚动再移动选区 —— 格子永远不会出现"出界闪现" */
   function navigateTo(row: number, col: number): void {

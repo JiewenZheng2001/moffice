@@ -1,5 +1,6 @@
 import type { ICommand } from '@/model/command'
 import { CompoundCommand } from '@/model/command'
+import { clipboardManager } from './clipboardManager'
 
 /**
  * CommandService —— 命令模式调度中心
@@ -52,8 +53,15 @@ class CommandService {
    * 执行一个命令
    * - 新命令入 undo 栈时清空 redo 栈（防止分支历史）
    * - 超出 MAX_STACK 时移除最旧的命令
+   * - 默认退出剪切/复制模式；粘贴类命令可传 skipClipboardReset 跳过
+   *   （复制模式粘贴后保留虚线框是 Excel 行为，由调用方管理模式）
    */
-  execute(command: ICommand): void {
+  execute(command: ICommand, opts?: { skipClipboardReset?: boolean }): void {
+    // 数据变更 → 退出所有剪贴板模式（虚线框 + 剪贴板缓存）
+    if (!opts?.skipClipboardReset) {
+      clipboardManager.exitAllModes()
+    }
+
     command.execute()
     this.undoStack.push(command)
     this.redoStack = [] // 新操作使重做历史失效

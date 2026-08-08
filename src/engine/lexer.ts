@@ -30,17 +30,28 @@ export function tokenize(input: string): Token[] {
       continue
     }
 
-    // 字符串："..."
+    // 字符串："..."，支持 "" 转义（Excel 语法：双引号表示字符串内的引号）
     if (ch === '"') {
       const start = pos
       pos++ // 跳开头的引号
-      while (pos < src.length && src[pos] !== '"') pos++
-      if (pos >= src.length) {
+      while (pos < src.length) {
+        if (src[pos] === '"') {
+          // 连续两个引号 → 转义引号，跳过
+          if (pos + 1 < src.length && src[pos + 1] === '"') {
+            pos += 2
+            continue
+          }
+          // 单个引号 → 字符串结束
+          pos++
+          break
+        }
+        pos++
+      }
+      if (pos >= src.length && src[pos - 1] !== '"') {
         // 未闭合的字符串
         tokens.push({ type: TokenType.STRING, value: src.slice(start, pos), pos: start })
         break
       }
-      pos++ // 跳结尾的引号
       tokens.push({ type: TokenType.STRING, value: src.slice(start, pos), pos: start })
       continue
     }
@@ -80,8 +91,8 @@ export function tokenize(input: string): Token[] {
       tokens.push({ type: TokenType.EQ, value: '=', pos }); pos++; continue
     }
 
-    // 字母开头 → 函数名 / 单元格引用
-    if (isAlpha(ch)) {
+    // 字母或 $ 开头 → 函数名 / 单元格引用（支持 $A$1 绝对引用）
+    if (isAlpha(ch) || ch === '$') {
       const start = pos
       while (pos < src.length && (isAlphaNumeric(src[pos]) || src[pos] === '$')) pos++
       const word = src.slice(start, pos)

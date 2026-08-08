@@ -1,14 +1,18 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Workbook, Sheet, CellRef, CellValue } from '@/model/types'
-import { SetCellCommand, PasteCommand, InsertRowCommand, DeleteRowCommand, InsertColumnCommand, DeleteColumnCommand } from '@/model/command'
+import type { Workbook, Sheet, CellRef, CellValue, CellFormat } from '@/model/types'
+import { SetCellCommand, PasteCommand, SetCellFormatCommand, InsertRowCommand, DeleteRowCommand, InsertColumnCommand, DeleteColumnCommand } from '@/model/command'
 import { commandService } from '@/services/commandService'
+import { clipboardManager } from '@/services/clipboardManager'
+import { applyImport, type ImportedSheet } from '@/services/importService'
 import { useFormulaStore } from './formulaStore'
-import { useUiStore } from './uiStore'
 
 /**
  * 工作簿 Store —— 持有 Workbook 数据模型
  * 所有数据变更必须通过 CommandService → Command 执行（支持撤销/重做）
+ *
+ * 注意：setCellValue 不再负责清除剪切/复制模式 —
+ * 该职责由 commandService.execute() 统一处理。
  */
 export const useWorkbookStore = defineStore('workbook', () => {
   // ---- State ----
@@ -40,25 +44,61 @@ export const useWorkbookStore = defineStore('workbook', () => {
     workbook.value.sheets.push(sheet)
     if (!workbook.value.activeSheetId) {
       workbook.value.activeSheetId = id
+      // 首个 Sheet 创建时同步依赖图上下文
+      useFormulaStore().setActiveSheetContext(id)
     }
   }
 
   function setActiveSheet(sheetId: string): void {
     workbook.value.activeSheetId = sheetId
+    // 切换 Sheet → 清空命令栈（避免 Ctrl+Z 作用于错误的 Sheet）
+    commandService.clear()
+    // 退出剪贴板模式（虚线框属于旧 Sheet 的选区）
+    clipboardManager.exitAllModes()
+    // 同步公式依赖图上下文（不同 Sheet 的依赖图 key 隔离）
+    useFormulaStore().setActiveSheetContext(sheetId)
+  }
+
+  /**
+   * 导入替换整个工作簿（打开文件语义）
+   * - 用导入的 sheets 替换现有所有 sheets
+   * - 清空命令栈（导入不可撤销，等价于打开新文件）
+   * - 激活第一个导入的 sheet
+   */
+  function importSheets(imported: ImportedSheet[]): void {
+    if (imported.length === 0) return
+    const newSheets: Sheet[] = imported.map((imp, i) => {
+      const id = `sheet-${Date.now()}-${i}`
+      const sheet: Sheet = {
+        id,
+        name: imp.name,
+        cells: new Map(),
+        rowCount: 200,
+        columnCount: 26,
+        columnWidths: new Map(),
+        rowHeights: new Map(),
+        tabColor: null,
+      }
+      applyImport(sheet, imp)
+      return sheet
+    })
+    workbook.value.sheets = newSheets
+    workbook.value.activeSheetId = newSheets[0].id
+    commandService.clear()
+    clipboardManager.exitAllModes()
+    useFormulaStore().setActiveSheetContext(newSheets[0].id)
   }
 
   /**
    * 设置单元格值（通过命令模式，支持撤销）
    * 自动检测公式（以 "=" 开头），交由公式引擎计算
    * 自动将数值型字符串转为 number（如 "3" → 3）
+   *
+   * 注意：不再直接清除剪切/复制模式，由 commandService.execute() 统一处理
    */
   function setCellValue(ref: CellRef, value: CellValue): void {
     const sheet = activeSheet.value
     if (!sheet) return
-
-    // 修改单元格值 → 退出所有虚线框模式
-    const uiStore = useUiStore()
-    uiStore.clearAllRanges()
 
     // 非公式的字符串值自动转为数值（Excel 标准行为）
     if (typeof value === 'string' && !value.startsWith('=')) {
@@ -72,14 +112,17 @@ export const useWorkbookStore = defineStore('workbook', () => {
     if (typeof value === 'string' && value.startsWith('=')) {
       const formulaStore = useFormulaStore()
       const result = formulaStore.compute(value, sheet)
-      const computedValue = result.value
+      let computedValue = result.value
 
-      // 如果不是循环引用，更新依赖图
+      // 如果不是循环引用，更新依赖图；若检测到环，结果改为 #CIRCULAR!
       if (computedValue !== '#CIRCULAR!') {
-        formulaStore.setDeps(ref, result.deps)
+        const cycle = formulaStore.setDeps(ref, result.deps)
+        if (cycle) {
+          computedValue = '#CIRCULAR!'
+        }
       }
 
-      // 用计算后的值创建命令
+      // 用计算后的值创建命令（commandService.execute 会自动退出剪贴板模式）
       commandService.execute(new SetCellCommand(sheet, ref, computedValue, value))
 
       // 传播重算：重新计算所有依赖此格的公式
@@ -127,11 +170,13 @@ export const useWorkbookStore = defineStore('workbook', () => {
     }
   }
 
-  /** 批量粘贴单元格（通过命令模式） */
+  /** 批量粘贴单元格（通过命令模式）
+   * 注意：粘贴不退出剪贴板模式（复制模式粘贴后保留虚线框，由调用方管理）
+   */
   function pasteCells(cells: Map<CellRef, CellValue>): void {
     const sheet = activeSheet.value
     if (!sheet) return
-    commandService.execute(new PasteCommand(sheet, cells))
+    commandService.execute(new PasteCommand(sheet, cells), { skipClipboardReset: true })
   }
 
   /** 在指定位置后插入一行 */
@@ -162,6 +207,17 @@ export const useWorkbookStore = defineStore('workbook', () => {
     commandService.execute(new DeleteColumnCommand(sheet, colIndex))
   }
 
+  /**
+   * 对一组单元格批量应用格式（通过命令模式，支持撤销）
+   * @param refs 目标单元格（可为空单元格）
+   * @param formatPatch 格式片段（如 { bold: true }，只改指定字段）
+   */
+  function applyFormat(refs: CellRef[], formatPatch: Partial<CellFormat>): void {
+    const sheet = activeSheet.value
+    if (!sheet || refs.length === 0) return
+    commandService.execute(new SetCellFormatCommand(sheet, refs, formatPatch))
+  }
+
   // ---- 撤销/重做（含依赖传播 + 剪切状态恢复） ----
 
   function undo(): void {
@@ -175,24 +231,28 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const command = commandService.redo()
     if (!command) return
     recalcAffected(command)
-    // 重做剪切粘贴时恢复虚线框
-    if (command.getSourceRefs) {
-      restoreCutRange(command)
-    }
+    restoreCutRange(command)
   }
 
-  /** 如果命令是剪切操作，恢复 uiStore 的 cutRange 虚线框状态 */
+  /**
+   * 如果命令关联剪切/复制操作，恢复剪贴板状态机 + 虚线框 UI
+   * 通过 ClipboardManager 统一恢复，确保系统剪贴板也被回写
+   */
   function restoreCutRange(command: { getSourceRefs?(): string[] }): void {
     if (!command.getSourceRefs) return
     const refs = command.getSourceRefs()
     if (refs.length === 0) return
-    const uiStore = useUiStore()
     const sorted = [...refs].sort()
-    uiStore.setCutRange({ startRef: sorted[0], endRef: sorted[sorted.length - 1] })
+    const range = { startRef: sorted[0], endRef: sorted[sorted.length - 1] }
+
+    // 恢复剪切模式 + 虚线框 + 系统剪贴板
+    clipboardManager.restoreMode('cut', range)
   }
 
   /** undo/redo 后重算受影响的公式（含依赖传播） */
-  function recalcAffected(command: { getAffectedRefs(): string[] }): void {
+  function recalcAffected(command: { getAffectedRefs(): string[]; needsRecalc?(): boolean }): void {
+    // 纯格式命令不改变值 → 跳过重算
+    if (command.needsRecalc?.() === false) return
     const sheet = activeSheet.value
     if (!sheet) return
     const formulaStore = useFormulaStore()
@@ -245,6 +305,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     activeSheet,
     addSheet,
     setActiveSheet,
+    importSheets,
     setCellValue,
     addRows,
     pasteCells,
@@ -252,6 +313,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     deleteRow,
     insertColumn,
     deleteColumn,
+    applyFormat,
     undo,
     redo,
   }

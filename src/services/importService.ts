@@ -16,6 +16,8 @@ interface ImportedSheet {
   columnWidths: Map<number, number>
 }
 
+export type { ImportedSheet }
+
 /** 导入 XLSX 文件 */
 export async function importXlsx(file: File): Promise<ImportResult> {
   const workbook = new ExcelJS.Workbook()

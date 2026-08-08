@@ -7,7 +7,7 @@ import { indexToCol, colToIndex, toCellRef } from '@/utils/columnUtils'
 import { useVirtualScroll } from '@/composables/useVirtualScroll'
 import { gridScrollRef } from '@/composables/useGridScrollRef'
 import ContextMenu from './ContextMenu.vue'
-import type { Cell } from '@/model/types'
+import type { Cell, CellFormat } from '@/model/types'
 
 const workbookStore = useWorkbookStore()
 const uiStore = useUiStore()
@@ -223,19 +223,109 @@ function isEditing(row: number, col: number): boolean {
   return editCellRef.value === toCellRef(row, col)
 }
 
+/** 边框样式 → CSS border 宽度（thin/medium/thick 映射） */
+const BORDER_WIDTHS: Record<string, string> = {
+  thin: '1px',
+  medium: '2px',
+  thick: '3px',
+  dashed: '1px',
+  dotted: '1px',
+  double: '3px',
+}
+
+/** 边框样式 → CSS border-style（实线/虚线等） */
+const BORDER_STYLES: Record<string, string> = {
+  thin: 'solid',
+  medium: 'solid',
+  thick: 'solid',
+  dashed: 'dashed',
+  dotted: 'dotted',
+  double: 'double',
+}
+
+/**
+ * 生成单元格的内联样式（应用 CellFormat）
+ * 优先级高于 CSS 类中的默认网格线，用户设置的边框会覆盖网格线
+ */
+function cellStyle(row: number, col: number): Record<string, string> {
+  const fmt = getCell(row, col).format
+  const style: Record<string, string> = {}
+
+  if (fmt.fontFamily) style.fontFamily = fmt.fontFamily
+  if (fmt.fontSize) style.fontSize = `${fmt.fontSize}px`
+  if (fmt.bold) style.fontWeight = 'bold'
+  if (fmt.italic) style.fontStyle = 'italic'
+  if (fmt.underline) style.textDecoration = 'underline'
+  if (fmt.textColor) style.color = fmt.textColor
+  if (fmt.backgroundColor) style.backgroundColor = fmt.backgroundColor
+  if (fmt.textAlign) style.textAlign = fmt.textAlign
+  if (fmt.verticalAlign) style.verticalAlign = fmt.verticalAlign
+
+  // 四边边框：borderTop 覆盖默认顶部网格线，以此类推
+  const borderKeys = ['borderTop', 'borderBottom', 'borderLeft', 'borderRight'] as const
+  for (const key of borderKeys) {
+    const b = fmt[key]
+    if (b) {
+      style[key] = `${BORDER_WIDTHS[b.style]} ${BORDER_STYLES[b.style]} ${b.color}`
+    }
+  }
+  return style
+}
+
+/**
+ * 数字格式化显示（numberFormat 支持）
+ * 支持：千分位 #,##0、小数位 0.00、百分比 0%、货币 ¥/$、组合
+ * 日期/时间等复杂格式暂不支持（显示原始值）
+ */
+function formatNumberValue(value: number, format: string): string {
+  const isPercent = format.includes('%')
+  const currency = format.startsWith('¥') ? '¥' : format.startsWith('$') ? '$' : ''
+  // 小数位数：格式中 "." 后 0 的个数（如 "0.00" → 2）
+  const dotMatch = format.match(/\.(0+)/)
+  const decimals = dotMatch ? dotMatch[1].length : 0
+  const useThousands = format.includes(',')
+
+  let v = value
+  if (isPercent) v = value * 100
+
+  let s = v.toFixed(decimals)
+  if (useThousands) {
+    const [int, frac] = s.split('.')
+    // 千分位正则：从右往左每 3 位插逗号
+    s = int.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (frac ? `.${frac}` : '')
+  }
+  return currency + s + (isPercent ? '%' : '')
+}
+
+/** 单元格显示文本：公式错误优先 → 数字格式 → 原值 */
+function displayText(cell: { error: string | null; computedValue: unknown; format: CellFormat }): string {
+  if (cell.error) return cell.error
+  const val = cell.computedValue
+  const fmt = cell.format
+  if (typeof val === 'number' && fmt.numberFormat && fmt.numberFormat !== 'General') {
+    return formatNumberValue(val, fmt.numberFormat)
+  }
+  return val === null || val === undefined ? '' : String(val)
+}
+
 /**
  * 当通过键盘（F2/Enter）进入编辑模式时，
  * editCellRef 可能还未设置 → 自动同步为当前选区
+ * 并聚焦输入框（双击路径在 handleCellDblClick 中已聚焦）
  */
 watch(
   () => uiStore.isEditing,
-  (editing) => {
+  async (editing) => {
     if (editing && !editCellRef.value) {
       const ref = uiStore.activeRef
       editCellRef.value = ref
       const sheet = workbookStore.activeSheet
       const cell = sheet?.cells?.get(ref)
       editValue.value = cell?.formula ?? String(cell?.rawValue ?? '')
+      // 等 Vue 渲染出 input 后再聚焦，确保键盘输入直接进入编辑器
+      await nextTick()
+      const input = document.querySelector('.cell-input') as HTMLInputElement | null
+      input?.focus()
     }
   },
 )
@@ -286,7 +376,7 @@ watch(
             v-for="colIdx in colCount"
             :key="colIdx"
             class="cell"
-            :style="{ width: getColWidth(colIdx - 1) + 'px', minWidth: getColWidth(colIdx - 1) + 'px' }"
+            :style="[{ width: getColWidth(colIdx - 1) + 'px', minWidth: getColWidth(colIdx - 1) + 'px' }, cellStyle(row.index, colIdx - 1)]"
             :class="{
               'cell--selected': isSelected(row.index, colIdx - 1),
               'cell--active': isActive(row.index, colIdx - 1),
@@ -308,7 +398,7 @@ watch(
             </template>
             <template v-else>
               <span class="cell-value">
-                {{ getCell(row.index, colIdx - 1).computedValue ?? '' }}
+                {{ displayText(getCell(row.index, colIdx - 1)) }}
               </span>
             </template>
           </td>

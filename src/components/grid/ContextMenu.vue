@@ -2,7 +2,16 @@
 import { ref } from 'vue'
 import { useWorkbookStore } from '@/stores/workbookStore'
 import { useUiStore } from '@/stores/uiStore'
-import { copySelection, cutSelection, readClipboardForPaste, computePasteCells } from '@/services/clipboardService'
+import { toCellRef } from '@/utils/columnUtils'
+import {
+  clipboardManager,
+  serializeSelection,
+  getSelectionBounds,
+  computePasteCells,
+  parseTSV,
+} from '@/services/clipboardManager'
+import { CutPasteCommand } from '@/model/command'
+import { commandService } from '@/services/commandService'
 
 const workbookStore = useWorkbookStore()
 const uiStore = useUiStore()
@@ -39,7 +48,9 @@ async function onCopy(): Promise<void> {
   if (!sheet) return
   focusTarget()
   const range = uiStore.getSelectionRange()
-  await copySelection(sheet, range.startRef, range.endRef)
+  const bounds = getSelectionBounds(range.startRef, range.endRef)
+  const tsv = serializeSelection(sheet, bounds)
+  clipboardManager.startCopy({ startRef: range.startRef, endRef: range.endRef }, tsv)
   hide()
 }
 
@@ -48,7 +59,9 @@ async function onCut(): Promise<void> {
   if (!sheet) return
   focusTarget()
   const range = uiStore.getSelectionRange()
-  await cutSelection(sheet, range.startRef, range.endRef)
+  const bounds = getSelectionBounds(range.startRef, range.endRef)
+  const tsv = serializeSelection(sheet, bounds)
+  clipboardManager.startCut({ startRef: range.startRef, endRef: range.endRef }, tsv)
   hide()
 }
 
@@ -56,10 +69,33 @@ async function onPaste(): Promise<void> {
   const sheet = workbookStore.activeSheet
   if (!sheet) return
   focusTarget()
-  const data = await readClipboardForPaste()
+
+  // 判断是否为剪切模式粘贴
+  const isCutPaste = clipboardManager.isCutMode
+  const sourceBounds = isCutPaste && clipboardManager.sourceRange
+    ? getSelectionBounds(clipboardManager.sourceRange.startRef, clipboardManager.sourceRange.endRef)
+    : null
+
+  const clipText = await clipboardManager.readSystemClipboard()
+  const data = parseTSV(clipText)
   if (data.length === 0) { hide(); return }
   const cells = computePasteCells(sheet, uiStore.activeRef, data)
-  workbookStore.pasteCells(cells)
+
+  if (sourceBounds) {
+    const sourceRefs: string[] = []
+    for (let r = sourceBounds.startRow; r <= sourceBounds.endRow; r++) {
+      for (let c = sourceBounds.startCol; c <= sourceBounds.endCol; c++) {
+        sourceRefs.push(toCellRef(r, c))
+      }
+    }
+    commandService.execute(
+      new CutPasteCommand(sheet, sourceRefs, cells, clipboardManager.tsvCache),
+      { skipClipboardReset: true },
+    )
+    clipboardManager.exitCutMode()
+  } else {
+    workbookStore.pasteCells(cells)
+  }
   hide()
 }
 

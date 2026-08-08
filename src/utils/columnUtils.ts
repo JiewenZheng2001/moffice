@@ -29,3 +29,16 @@ export function colToIndex(col: string): number {
 export function toCellRef(row: number, col: number): string {
   return `${indexToCol(col)}${row + 1}`
 }
+
+/**
+ * 解析单元格引用 "A1" → { col: 0, row: 0 }
+ * 返回 null 表示格式不合法
+ */
+export function parseRef(ref: string): { col: number; row: number } | null {
+  const m = ref.match(/^([A-Z]+)(\d+)$/i)
+  if (!m) return null
+  return {
+    col: colToIndex(m[1].toUpperCase()),
+    row: parseInt(m[2], 10) - 1,
+  }
+}

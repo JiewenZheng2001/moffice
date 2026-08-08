@@ -2,6 +2,7 @@
 import SpreadsheetGrid from './grid/SpreadsheetGrid.vue'
 import FormulaBar from './formula-bar/FormulaBar.vue'
 import Toolbar from './toolbar/Toolbar.vue'
+import FormatToolbar from './toolbar/FormatToolbar.vue'
 import SheetTabs from './sheet-tabs/SheetTabs.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { gridScrollRef } from '@/composables/useGridScrollRef'
@@ -17,8 +18,11 @@ useKeyboard(gridScrollRef)
       <FormulaBar />
     </div>
 
-    <!-- 工具栏 -->
+    <!-- 工具栏（文件操作） -->
     <Toolbar />
+
+    <!-- 格式工具栏（字体/颜色/对齐/数字格式） -->
+    <FormatToolbar />
 
     <!-- 表格区域（列头 + 行号 + 单元格 统一滚动） -->
     <div class="grid-wrapper">

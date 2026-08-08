@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from './fileSaveService'
 import type { Sheet } from '@/model/types'
-import { colToIndex } from '@/utils/columnUtils'
+import { parseRef } from '@/utils/columnUtils'
 
 /**
  * 文件导出服务 —— 将当前 Workbook 导出为 XLSX / CSV 文件
@@ -95,15 +95,4 @@ export async function exportCsv(sheet: Sheet, filename = 'spreadsheet.csv'): Pro
   const csv = Papa.unparse(data)
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }) // BOM for Excel
   saveAs(blob, filename)
-}
-
-// ---- 辅助 ----
-
-function parseRef(ref: string): { col: number; row: number } | null {
-  const m = ref.match(/^([A-Z]+)(\d+)$/i)
-  if (!m) return null
-  return {
-    col: colToIndex(m[1].toUpperCase()),
-    row: parseInt(m[2], 10) - 1,
-  }
 }
