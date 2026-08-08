@@ -62,6 +62,12 @@ const activeFormat = computed<CellFormat>(() => {
   return sheet?.cells.get(uiStore.activeRef)?.format ?? {}
 })
 
+/** 激活格是否有任意边框（控制按钮高亮 + title） */
+const hasAnyBorder = computed(() => {
+  const f = activeFormat.value
+  return !!(f.borderTop || f.borderBottom || f.borderLeft || f.borderRight)
+})
+
 /** 获取当前选区内的所有单元格引用 */
 function getSelectedRefs(): string[] {
   const range = uiStore.getSelectionRange()
@@ -101,10 +107,26 @@ function setAlign(align: 'left' | 'center' | 'right'): void {
 }
 
 // ---- 边框 ----
-/** 给选区四周套上细边框（黑） */
-function setAllBorders(): void {
-  const border = { color: '#000000', style: 'thin' as const }
-  apply({ borderTop: border, borderBottom: border, borderLeft: border, borderRight: border })
+/**
+ * 边框开关（toggle）：与粗体按钮同语义
+ * - 激活格已有任意边框 → 清除四边边框（再点取消）
+ * - 激活格无边框 → 给选区四周套上细黑边框
+ */
+function toggleBorders(): void {
+  const fmt = activeFormat.value
+  const hasBorder = !!(fmt.borderTop || fmt.borderBottom || fmt.borderLeft || fmt.borderRight)
+  if (hasBorder) {
+    // 取消：显式置 undefined 清除
+    apply({
+      borderTop: undefined,
+      borderBottom: undefined,
+      borderLeft: undefined,
+      borderRight: undefined,
+    })
+  } else {
+    const border = { color: '#000000', style: 'thin' as const }
+    apply({ borderTop: border, borderBottom: border, borderLeft: border, borderRight: border })
+  }
 }
 
 // ---- 颜色 ----
@@ -173,8 +195,13 @@ function onNumberFormatChange(e: Event): void {
 
     <div class="ft-divider" />
 
-    <!-- 边框 -->
-    <button class="ft-btn" title="全部边框（细线）" @click="setAllBorders">▦</button>
+    <!-- 边框（toggle：有点则无，无点则有） -->
+    <button
+      class="ft-btn"
+      :class="{ 'ft-btn--active': activeFormat.borderTop || activeFormat.borderBottom || activeFormat.borderLeft || activeFormat.borderRight }"
+      :title="hasAnyBorder ? '取消边框' : '添加全部边框'"
+      @click="toggleBorders"
+    >▦</button>
 
     <!-- 背景色 -->
     <div class="ft-color-wrap" title="背景色">

@@ -95,6 +95,26 @@ describe('FormatToolbar', () => {
     expect(fmt.borderRight).toEqual({ color: '#000000', style: 'thin' })
   })
 
+  it('边框按钮 toggle：再点一次取消边框', async () => {
+    const wrapper = mount(FormatToolbar)
+    const store = useWorkbookStore()
+    const borderBtn = wrapper.findAll('.ft-btn').find((b) => b.text() === '▦')!
+    // 第一次点击：添加边框
+    await borderBtn.trigger('click')
+    expect(store.activeSheet!.cells.get('A1')!.format.borderTop).toBeDefined()
+    // 按钮应高亮（激活格有边框）
+    expect(borderBtn.classes()).toContain('ft-btn--active')
+
+    // 第二次点击：取消边框
+    await borderBtn.trigger('click')
+    const fmt = store.activeSheet!.cells.get('A1')!.format
+    expect(fmt.borderTop).toBeUndefined()
+    expect(fmt.borderBottom).toBeUndefined()
+    expect(fmt.borderLeft).toBeUndefined()
+    expect(fmt.borderRight).toBeUndefined()
+    expect(borderBtn.classes()).not.toContain('ft-btn--active')
+  })
+
   it('格式应用到整个选区（多格）', async () => {
     const wrapper = mount(FormatToolbar)
     const store = useWorkbookStore()
