@@ -43,10 +43,10 @@ class CommandService {
   /**
    * 执行一组命令，打包为一个原子操作（撤销/重做时整体处理）
    */
-  executeBatch(commands: ICommand[], description?: string): void {
+  executeBatch(commands: ICommand[], description?: string, opts?: { skipClipboardReset?: boolean }): void {
     if (commands.length === 0) return
     const compound = new CompoundCommand(commands, description)
-    this.execute(compound)
+    this.execute(compound, opts)
   }
 
   /**

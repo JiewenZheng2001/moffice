@@ -70,21 +70,22 @@ async function onPaste(): Promise<void> {
   if (!sheet) return
   focusTarget()
 
-  // 判断是否为剪切模式粘贴
-  const isCutPaste = clipboardManager.isCutMode
-  const sourceBounds = isCutPaste && clipboardManager.sourceRange
+  // 源选区：剪切/复制虚线框位置（公式相对引用偏移需要）
+  const offsetSourceBounds = clipboardManager.sourceRange
     ? getSelectionBounds(clipboardManager.sourceRange.startRef, clipboardManager.sourceRange.endRef)
     : null
+  // 仅剪切模式清空源格
+  const isCutPaste = clipboardManager.isCutMode
 
   const clipText = await clipboardManager.readSystemClipboard()
   const data = parseTSV(clipText)
   if (data.length === 0) { hide(); return }
-  const cells = computePasteCells(sheet, uiStore.activeRef, data)
+  const cells = computePasteCells(sheet, uiStore.activeRef, data, offsetSourceBounds)
 
-  if (sourceBounds) {
+  if (isCutPaste && offsetSourceBounds) {
     const sourceRefs: string[] = []
-    for (let r = sourceBounds.startRow; r <= sourceBounds.endRow; r++) {
-      for (let c = sourceBounds.startCol; c <= sourceBounds.endCol; c++) {
+    for (let r = offsetSourceBounds.startRow; r <= offsetSourceBounds.endRow; r++) {
+      for (let c = offsetSourceBounds.startCol; c <= offsetSourceBounds.endCol; c++) {
         sourceRefs.push(toCellRef(r, c))
       }
     }
@@ -92,6 +93,8 @@ async function onPaste(): Promise<void> {
       new CutPasteCommand(sheet, sourceRefs, cells, clipboardManager.tsvCache),
       { skipClipboardReset: true },
     )
+    // 剪切粘贴的公式统一求值
+    workbookStore.evaluatePastedFormulas(cells)
     clipboardManager.exitCutMode()
   } else {
     workbookStore.pasteCells(cells)

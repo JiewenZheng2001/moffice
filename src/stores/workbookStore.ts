@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Workbook, Sheet, CellRef, CellValue, CellFormat } from '@/model/types'
+import type { ICommand } from '@/model/command'
 import { SetCellCommand, PasteCommand, SetCellFormatCommand, InsertRowCommand, DeleteRowCommand, InsertColumnCommand, DeleteColumnCommand } from '@/model/command'
 import { createSheet } from '@/model/sheet'
 import { commandService } from '@/services/commandService'
@@ -286,7 +287,72 @@ export const useWorkbookStore = defineStore('workbook', () => {
   function pasteCells(cells: Map<CellRef, CellValue>): void {
     const sheet = activeSheet.value
     if (!sheet) return
-    commandService.execute(new PasteCommand(sheet, cells), { skipClipboardReset: true })
+
+    // 粘贴值以 "=" 开头 → 公式格（Excel 行为：粘贴公式并重算）
+    // 打包为原子命令：PasteCommand（写原值）+ 公式求值命令，一次撤销全部恢复
+    const commands: ICommand[] = [new PasteCommand(sheet, cells)]
+    const formulaCells = collectFormulaCells(cells)
+
+    if (formulaCells.size > 0) {
+      const formulaStore = useFormulaStore()
+      for (const [ref, formula] of formulaCells) {
+        const result = formulaStore.compute(formula, sheet, workbook.value)
+        let computedValue = result.value
+        if (computedValue !== '#CIRCULAR!') {
+          const cycle = formulaStore.setDeps(ref, result.deps)
+          if (cycle) computedValue = '#CIRCULAR!'
+        }
+        commands.push(new SetCellCommand(sheet, ref, computedValue, formula))
+        recalcDependents(ref)
+      }
+    }
+
+    commandService.executeBatch(
+      commands,
+      `Paste ${cells.size} cells (${formulaCells.size} formulas)`,
+      { skipClipboardReset: true },
+    )
+  }
+
+  /**
+   * 剪切粘贴后的公式统一求值（CutPasteCommand 只搬原始值，这里补计算）
+   * 注意：此时粘贴目标已写入公式字符串（rawValue = "=..."），
+   * 本函数把公式格升级为完整公式（computedValue + formula + 依赖注册）
+   */
+  function evaluatePastedFormulas(cells: Map<CellRef, CellValue>): void {
+    const sheet = activeSheet.value
+    if (!sheet) return
+    const formulaCells = collectFormulaCells(cells)
+    if (formulaCells.size === 0) return
+
+    const commands: ICommand[] = []
+    const formulaStore = useFormulaStore()
+    for (const [ref, formula] of formulaCells) {
+      const result = formulaStore.compute(formula, sheet, workbook.value)
+      let computedValue = result.value
+      if (computedValue !== '#CIRCULAR!') {
+        const cycle = formulaStore.setDeps(ref, result.deps)
+        if (cycle) computedValue = '#CIRCULAR!'
+      }
+      commands.push(new SetCellCommand(sheet, ref, computedValue, formula))
+      recalcDependents(ref)
+    }
+    commandService.executeBatch(
+      commands,
+      `Evaluate ${formulaCells.size} pasted formulas`,
+      { skipClipboardReset: true },
+    )
+  }
+
+  /** 收集粘贴映射中以 "=" 开头的公式格 */
+  function collectFormulaCells(cells: Map<CellRef, CellValue>): Map<CellRef, string> {
+    const result = new Map<CellRef, string>()
+    for (const [ref, value] of cells) {
+      if (typeof value === 'string' && value.startsWith('=')) {
+        result.set(ref, value)
+      }
+    }
+    return result
   }
 
   /**
@@ -461,6 +527,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     setCellValue,
     addRows,
     pasteCells,
+    evaluatePastedFormulas,
     clearCells,
     insertRow,
     deleteRow,

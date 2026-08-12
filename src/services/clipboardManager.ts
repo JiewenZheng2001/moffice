@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import type { CellRange, Sheet, CellRef, CellValue } from '@/model/types'
 import { toCellRef } from '@/utils/columnUtils'
+import { shiftFormulaRefs } from '@/model/formulaShift'
 
 // ═══════════════════════════════════════════════════════
 // ClipboardManager —— 剪切/复制/粘贴状态机
@@ -262,11 +263,15 @@ export function parseTSV(text: string): string[][] {
 
 /**
  * 从 startRef 开始，将二维数组映射为单元格写入映射 { ref → value }
+ *
+ * @param sourceBounds 可选：源选区位置（复制/剪切时），用于公式相对引用偏移。
+ *   Excel 行为：复制 C1 的 =A1+B1 粘到 C2 → =A2+B2（相对引用平移）
  */
 export function computePasteCells(
   sheet: Sheet,
   startRef: CellRef,
   data: string[][],
+  sourceBounds?: SelectionBounds | null,
 ): Map<CellRef, CellValue> {
   const start = parseCellRef(startRef)
   if (!start) return new Map()
@@ -278,7 +283,17 @@ export function computePasteCells(
       const targetCol = start.col + c
       if (targetRow >= sheet.rowCount || targetCol >= sheet.columnCount) continue
       const ref = toCellRef(targetRow, targetCol)
-      const val: CellValue = data[r][c] === '' ? null : data[r][c]
+
+      let raw = data[r][c]
+      // 公式格（= 开头）且提供了源选区 → 相对引用偏移
+      // 偏移量 = 目标格 - 源格（源格 = sourceBounds 左上角 + r,c 偏移）
+      if (raw.startsWith('=') && sourceBounds) {
+        const sourceRow = sourceBounds.startRow + r
+        const sourceCol = sourceBounds.startCol + c
+        raw = shiftFormulaRefs(raw, targetRow - sourceRow, targetCol - sourceCol)
+      }
+
+      const val: CellValue = raw === '' ? null : raw
       result.set(ref, val)
     }
   }

@@ -110,13 +110,14 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         if (isInputFocused) return
         e.preventDefault()
 
-        // 判断是否为剪切模式粘贴（需要清空源格）
-        const isCutPaste = clipboardManager.isCutMode
-        const sourceBounds = isCutPaste && clipboardManager.sourceRange
+        // 源选区：剪切/复制虚线框位置（公式相对引用偏移需要）
+        const sourceBounds = clipboardManager.sourceRange
           ? getSelectionBounds(clipboardManager.sourceRange.startRef, clipboardManager.sourceRange.endRef)
           : null
+        // 是否剪切模式：只有剪切粘贴才清空源格
+        const isCutPaste = clipboardManager.isCutMode
 
-        await handlePaste(sourceBounds)
+        await handlePaste(isCutPaste ? sourceBounds : null, sourceBounds)
 
         // 剪切粘贴后退出剪切模式（清空虚线框 + 剪贴板）
         if (isCutPaste) {
@@ -307,10 +308,15 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
 
   /**
    * 粘贴：
-   * - 普通粘贴：从剪贴板读取 → 映射到单元格 → 批量写入
+   * - 普通粘贴：从剪贴板读取 → 映射到单元格 → 批量写入（公式偏移 + 求值）
    * - 剪切模式粘贴：清空源格 + 粘贴目标 → 打包为一个原子命令
+   * @param cutSourceBounds 剪切模式的源区（非 null 时清空源格）
+   * @param offsetSourceBounds 公式相对引用偏移的源区（剪切/复制模式都有）
    */
-  async function handlePaste(sourceBounds: SelectionBounds | null): Promise<void> {
+  async function handlePaste(
+    cutSourceBounds: SelectionBounds | null,
+    offsetSourceBounds: SelectionBounds | null = null,
+  ): Promise<void> {
     const sheet = workbookStore.activeSheet
     if (!sheet) return
     const active = uiStore.activeRef
@@ -320,14 +326,15 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
     const data = parseTSV(clipText)
     if (data.length === 0) return
 
-    const pasteCells = computePasteCells(sheet, active, data)
+    // 公式相对引用按源区偏移量平移
+    const pasteCells = computePasteCells(sheet, active, data, offsetSourceBounds)
 
-    if (sourceBounds) {
+    if (cutSourceBounds) {
       // 剪切模式粘贴 → 原子命令（清空源格 + 写入目标）
       // skipClipboardReset：剪切模式的退出由调用方（Ctrl+V 分支）统一处理
       const sourceRefs: string[] = []
-      for (let r = sourceBounds.startRow; r <= sourceBounds.endRow; r++) {
-        for (let c = sourceBounds.startCol; c <= sourceBounds.endCol; c++) {
+      for (let r = cutSourceBounds.startRow; r <= cutSourceBounds.endRow; r++) {
+        for (let c = cutSourceBounds.startCol; c <= cutSourceBounds.endCol; c++) {
           sourceRefs.push(toCellRef(r, c))
         }
       }
@@ -335,8 +342,10 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
         new CutPasteCommand(sheet, sourceRefs, pasteCells, clipboardManager.tsvCache),
         { skipClipboardReset: true },
       )
+      // 剪切粘贴的公式统一求值（偏移后的公式字符串 → 计算 + 依赖注册）
+      workbookStore.evaluatePastedFormulas(pasteCells)
     } else {
-      // 普通粘贴
+      // 普通粘贴（含公式求值）
       workbookStore.pasteCells(pasteCells)
     }
   }
