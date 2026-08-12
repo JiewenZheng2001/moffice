@@ -260,21 +260,6 @@ async function handleExportCsv(): Promise<void> {
       >
         <span>{{ saveState === 'saving' ? '⏳ 保存中' : '💾 保存' }}</span>
       </button>
-      <!-- 保存状态提示 -->
-      <span
-        v-if="!authed"
-        class="save-status"
-      >未登录，仅本地编辑</span>
-      <span
-        v-else
-        class="save-status"
-        :class="{
-          'save-status--ok': saveState === 'saved',
-          'save-status--error': saveState === 'error',
-        }"
-      >
-        {{ saveState === 'saved' ? '已保存' : saveState === 'error' ? saveError : saveState === 'saving' ? '保存中…' : '' }}
-      </span>
     </div>
     <div class="toolbar-group">
       <button class="tb-btn" @click="handleImportClick">
@@ -294,6 +279,21 @@ async function handleExportCsv(): Promise<void> {
         <span>📄 CSV</span>
       </button>
     </div>
+    <!-- 保存状态提示：独立于按钮组，flex 靠右显示，不改变工具栏布局 -->
+    <span
+      v-if="!authed"
+      class="save-status save-status--right"
+    >未登录，仅本地编辑</span>
+    <span
+      v-else
+      class="save-status save-status--right"
+      :class="{
+        'save-status--ok': saveState === 'saved',
+        'save-status--error': saveState === 'error',
+      }"
+    >
+      {{ saveState === 'saved' ? '已保存' : saveState === 'error' ? saveError : saveState === 'saving' ? '保存中…' : '' }}
+    </span>
   </div>
 </template>
 
@@ -455,8 +455,13 @@ async function handleExportCsv(): Promise<void> {
 .save-status {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-left: 4px;
   white-space: nowrap;
+}
+
+/* 靠右显示：margin-left auto 在 flex 容器中推至最右，不影响按钮布局 */
+.save-status--right {
+  margin-left: auto;
+  padding-left: 12px;
 }
 
 .save-status--ok {
