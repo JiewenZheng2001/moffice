@@ -122,12 +122,20 @@ describe('workbookStore', () => {
       expect(store.activeSheet?.name).toBe('Sheet1')
     })
 
-    it('addSheet 添加新 Sheet 并保留第一个激活', () => {
+    it('addSheet 添加新 Sheet 并自动激活（Excel 行为）', () => {
       const store = freshStore()
       store.addSheet('Sheet2')
       expect(store.workbook.sheets).toHaveLength(2)
-      // 第一个 sheet 保持激活
-      expect(store.activeSheet?.name).toBe('Sheet1')
+      // 新建即激活（对标 Excel）
+      expect(store.activeSheet?.name).toBe('Sheet2')
+    })
+
+    it('addSheet 缺省名自动去重（Sheet1/2/3...）', () => {
+      const store = freshStore()
+      store.addSheet('自定义')
+      store.addSheet()
+      store.addSheet()
+      expect(store.workbook.sheets.map((s) => s.name)).toEqual(['Sheet1', '自定义', 'Sheet2', 'Sheet3'])
     })
 
     it('setActiveSheet 切换激活 sheet', () => {
@@ -463,7 +471,8 @@ describe('workbookStore', () => {
       s2Cell.computedValue = 5
       s2.cells.set('A1', s2Cell)
 
-      // 当前 sheet（Sheet1）公式引用 Sheet2!A1
+      // 切回 Sheet1：公式引用 Sheet2!A1
+      store.setActiveSheet(store.workbook.sheets[0].id)
       store.setCellValue('B1', '=Sheet2!A1*2')
       expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(10)
     })
@@ -471,7 +480,8 @@ describe('workbookStore', () => {
     it('跨 sheet 联动：改 Sheet2 的 A1 → Sheet1 公式重算', () => {
       const store = freshStore()
       store.addSheet('Sheet2')
-      // Sheet1 公式引用 Sheet2!A1
+      // 切回 Sheet1：公式引用 Sheet2!A1
+      store.setActiveSheet(store.workbook.sheets[0].id)
       store.setCellValue('B1', '=Sheet2!A1*2')
       expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(0) // Sheet2!A1 空 = 0
 

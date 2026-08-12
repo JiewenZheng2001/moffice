@@ -60,11 +60,28 @@ export const useWorkbookStore = defineStore('workbook', () => {
     return `sheet-${Date.now()}-${sheetSeq}`
   }
 
-  function addSheet(name: string): void {
+  /**
+   * 自动生成不重名的 sheet 名（Sheet1、Sheet2...跳过已占用）
+   * 为什么不用 sheets.length + 1：一旦未来支持删除 sheet，
+   * 如 [Sheet1, Sheet3] 删除 Sheet3 后 length=1 → 会生成重名的 Sheet2
+   */
+  function nextSheetName(): string {
+    const names = new Set(workbook.value.sheets.map((s) => s.name))
+    let i = 1
+    while (names.has(`Sheet${i}`)) i++
+    return `Sheet${i}`
+  }
+
+  /**
+   * 添加新 Sheet（Excel 行为：新建即激活）
+   * @param name 可选；缺省时自动生成不重名名字
+   * 复用 setActiveSheet：清命令栈 + 退出剪贴板模式 + 同步公式上下文
+   */
+  function addSheet(name?: string): void {
     const id = nextSheetId()
     const sheet: Sheet = {
       id,
-      name,
+      name: name?.trim() || nextSheetName(),
       cells: new Map(),
       rowCount: 200,
       columnCount: 26,
@@ -73,11 +90,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
       tabColor: null,
     }
     workbook.value.sheets.push(sheet)
-    if (!workbook.value.activeSheetId) {
-      workbook.value.activeSheetId = id
-      // 首个 Sheet 创建时同步依赖图上下文（含名字，deps key 用）
-      useFormulaStore().setActiveSheetContext(id, name)
-    }
+    setActiveSheet(id)
   }
 
   function setActiveSheet(sheetId: string): void {

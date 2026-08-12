@@ -15,10 +15,9 @@ function selectSheet(sheetId: string): void {
   workbookStore.setActiveSheet(sheetId)
 }
 
-/** 新建 Sheet */
+/** 新建 Sheet（store 自动命名 Sheet1/2/3... 并立即激活） */
 function addSheet(): void {
-  const count = workbookStore.workbook.sheets.length
-  workbookStore.addSheet(`Sheet${count + 1}`)
+  workbookStore.addSheet()
 }
 </script>
 
