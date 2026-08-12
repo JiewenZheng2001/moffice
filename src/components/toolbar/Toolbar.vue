@@ -215,6 +215,10 @@ async function handleExportCsv(): Promise<void> {
     </div>
     <div class="toolbar-divider" />
     <div class="toolbar-group">
+      <!-- 新建工作簿 -->
+      <button class="tb-btn" title="新建工作簿" @click="workbookStore.newWorkbook()">
+        <span>➕ 新建</span>
+      </button>
       <!-- 后端保存/打开（需登录） -->
       <div class="open-wrap">
         <button

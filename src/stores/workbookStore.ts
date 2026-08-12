@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Workbook, Sheet, CellRef, CellValue, CellFormat } from '@/model/types'
 import { SetCellCommand, PasteCommand, SetCellFormatCommand, InsertRowCommand, DeleteRowCommand, InsertColumnCommand, DeleteColumnCommand } from '@/model/command'
+import { createSheet } from '@/model/sheet'
 import { commandService } from '@/services/commandService'
 import { clipboardManager } from '@/services/clipboardManager'
 import { applyImport, type ImportedSheet } from '@/services/importService'
@@ -141,6 +142,35 @@ export const useWorkbookStore = defineStore('workbook', () => {
     }
     autoSaveSuppressed.value = true
     persistId(loaded.id)
+  }
+
+  /** 自增计数器：新建工作簿 id 也防同毫秒冲突 */
+  let wbSeq = 0
+  function nextWorkbookId(): string {
+    wbSeq++
+    return `wb-${Date.now()}-${wbSeq}`
+  }
+
+  /**
+   * 新建空白工作簿（打开"新建文件"语义）
+   * - 生成新 id 并持久化（后续编辑自动保存到新记录）
+   * - 清空命令栈 / 退出剪贴板模式 / 重置依赖图上下文
+   * - 抑制自动保存：空白新表不立即回写后端（用户编辑后才保存）
+   */
+  function newWorkbook(): void {
+    const id = nextWorkbookId()
+    const sheet = createSheet('Sheet1')
+    workbook.value = {
+      id,
+      name: '未命名表格',
+      sheets: [sheet],
+      activeSheetId: sheet.id,
+    }
+    commandService.clear()
+    clipboardManager.exitAllModes()
+    useFormulaStore().setActiveSheetContext(id, sheet.name)
+    autoSaveSuppressed.value = true
+    persistId(id)
   }
 
   /**
@@ -427,6 +457,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     replaceWorkbook,
     restoreLastWorkbook,
     persistWorkbookId: persistId,
+    newWorkbook,
     setCellValue,
     addRows,
     pasteCells,

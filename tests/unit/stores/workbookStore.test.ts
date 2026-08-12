@@ -57,6 +57,21 @@ describe('workbookStore 工作簿 id 持久化与自动恢复', () => {
     expect(store.autoSaveSuppressed).toBe(true)
   })
 
+  it('newWorkbook 创建空白表 + 新 id 持久化 + 抑制自动保存', () => {
+    localStorage.clear()
+    const store = freshStore()
+    const oldId = store.workbook.id
+    store.setCellValue('A1', 'x') // 有数据
+    store.newWorkbook()
+
+    expect(store.workbook.id).not.toBe(oldId)
+    expect(store.workbook.sheets).toHaveLength(1)
+    expect(store.workbook.sheets[0].cells.size).toBe(0) // 空白
+    expect(localStorage.getItem('moffice_workbook_id')).toBe(store.workbook.id)
+    expect(store.autoSaveSuppressed).toBe(true)
+    expect(commandService.canUndo).toBe(false) // 命令栈清空
+  })
+
   it('restoreLastWorkbook 成功时替换当前工作簿', async () => {
     localStorage.clear()
     const store = freshStore()
