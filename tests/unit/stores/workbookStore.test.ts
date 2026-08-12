@@ -131,6 +131,41 @@ describe('workbookStore', () => {
       expect(raw(store, 'B2')).toBe('x')
     })
 
+    it('pasteCells 公式引用同批粘贴的单元格：先写值再求值（D1=C1 显示 5 而非 0）', () => {
+      const store = freshStore()
+      store.setCellValue('A1', 5)
+      store.setCellValue('B1', '=A1')
+
+      // 模拟复制 A1:B1 → 粘贴 C1:D1（B1 公式 =A1 偏移为 =C1，引用同批粘贴的 C1）
+      store.pasteCells(new Map([
+        ['C1', 5],
+        ['D1', '=C1'],
+      ]))
+
+      expect(raw(store, 'C1')).toBe(5)
+      expect(store.activeSheet!.cells.get('C1')!.computedValue).toBe(5)
+      expect(store.activeSheet!.cells.get('D1')!.formula).toBe('=C1')
+      // 关键断言：D1 引用同批粘贴的 C1，值必须是 5（旧 bug 是 0）
+      expect(store.activeSheet!.cells.get('D1')!.computedValue).toBe(5)
+    })
+
+    it('pasteCells 撤销：写值 + 求值一次撤销全部恢复', () => {
+      const store = freshStore()
+      store.setCellValue('A1', 5)
+      store.pasteCells(new Map([
+        ['C1', 5],
+        ['D1', '=C1'],
+      ]))
+      expect(store.activeSheet!.cells.get('D1')!.computedValue).toBe(5)
+
+      // 第一次撤销：公式求值（D1 回到纯文本 "=C1"）
+      store.undo()
+      // 第二次撤销：PasteCommand（C1/D1 都清除）
+      store.undo()
+      expect(store.activeSheet!.cells.has('C1')).toBe(false)
+      expect(store.activeSheet!.cells.has('D1')).toBe(false)
+    })
+
     it('insertRow / deleteRow / insertColumn / deleteColumn 走命令栈', () => {
       const store = freshStore()
       store.insertRow(0)

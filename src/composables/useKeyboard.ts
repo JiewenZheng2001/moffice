@@ -321,8 +321,11 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
     if (!sheet) return
     const active = uiStore.activeRef
 
-    // 从系统剪贴板读取（降级时用 clipboardManager 缓存）
-    const clipText = await clipboardManager.readSystemClipboard()
+    // 从系统剪贴板读取；失败（无授权/非安全上下文）时 fallback 到内部 tsvCache
+    let clipText = await clipboardManager.readSystemClipboard()
+    if (!clipText) {
+      clipText = clipboardManager.tsvCache
+    }
     const data = parseTSV(clipText)
     if (data.length === 0) return
 

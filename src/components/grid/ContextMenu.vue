@@ -77,7 +77,11 @@ async function onPaste(): Promise<void> {
   // 仅剪切模式清空源格
   const isCutPaste = clipboardManager.isCutMode
 
-  const clipText = await clipboardManager.readSystemClipboard()
+  // 从系统剪贴板读取；失败（无授权/非安全上下文）时 fallback 到内部 tsvCache
+  let clipText = await clipboardManager.readSystemClipboard()
+  if (!clipText) {
+    clipText = clipboardManager.tsvCache
+  }
   const data = parseTSV(clipText)
   if (data.length === 0) { hide(); return }
   const cells = computePasteCells(sheet, uiStore.activeRef, data, offsetSourceBounds)

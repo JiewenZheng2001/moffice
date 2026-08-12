@@ -288,30 +288,16 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const sheet = activeSheet.value
     if (!sheet) return
 
-    // 粘贴值以 "=" 开头 → 公式格（Excel 行为：粘贴公式并重算）
-    // 打包为原子命令：PasteCommand（写原值）+ 公式求值命令，一次撤销全部恢复
-    const commands: ICommand[] = [new PasteCommand(sheet, cells)]
-    const formulaCells = collectFormulaCells(cells)
-
-    if (formulaCells.size > 0) {
-      const formulaStore = useFormulaStore()
-      for (const [ref, formula] of formulaCells) {
-        const result = formulaStore.compute(formula, sheet, workbook.value)
-        let computedValue = result.value
-        if (computedValue !== '#CIRCULAR!') {
-          const cycle = formulaStore.setDeps(ref, result.deps)
-          if (cycle) computedValue = '#CIRCULAR!'
-        }
-        commands.push(new SetCellCommand(sheet, ref, computedValue, formula))
-        recalcDependents(ref)
-      }
-    }
-
-    commandService.executeBatch(
-      commands,
-      `Paste ${cells.size} cells (${formulaCells.size} formulas)`,
-      { skipClipboardReset: true },
-    )
+    /**
+     * 两阶段粘贴（修复计算时机 bug）：
+     * 1. 先执行 PasteCommand 写入所有值（含公式字符串作为 rawValue）
+     * 2. 再计算公式 → 此时同批粘贴的目标格已有值，
+     *    引用它们的公式（如 D1 引用同批粘贴的 C1）结果正确
+     *
+     * 之前的问题：在 executeBatch 前计算公式 → C1 还没写入 → D1(=C1) 算成 0
+     */
+    commandService.execute(new PasteCommand(sheet, cells), { skipClipboardReset: true })
+    evaluatePastedFormulas(cells)
   }
 
   /**
