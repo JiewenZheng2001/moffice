@@ -16,13 +16,34 @@ import { useFormulaStore } from './formulaStore'
  */
 export const useWorkbookStore = defineStore('workbook', () => {
   // ---- State ----
-  // id 用唯一值：多用户场景下避免所有新工作簿都叫 "default" 互相覆盖
+  /**
+   * 工作簿 id 持久化到 localStorage：
+   * 刷新页面后 id 保持稳定，登录用户可自动恢复上次的工作簿，
+   * 避免"刷新后是新表、自动保存产生重复记录"的问题
+   */
+  const WORKBOOK_ID_KEY = 'moffice_workbook_id'
+
+  function loadPersistedId(): string {
+    const saved = localStorage.getItem(WORKBOOK_ID_KEY)
+    if (saved) return saved
+    const id = `wb-${Date.now()}`
+    localStorage.setItem(WORKBOOK_ID_KEY, id)
+    return id
+  }
+
+  function persistId(id: string): void {
+    localStorage.setItem(WORKBOOK_ID_KEY, id)
+  }
+
   const workbook = ref<Workbook>({
-    id: `wb-${Date.now()}`,
+    id: loadPersistedId(),
     name: '未命名表格',
     sheets: [],
     activeSheetId: '',
   })
+
+  /** 加载/替换工作簿后置 true，Toolbar 自动保存 watch 消费后跳过回写 */
+  const autoSaveSuppressed = ref(false)
 
   // ---- Getters ----
   const activeSheet = computed<Sheet | undefined>(() =>
@@ -96,6 +117,8 @@ export const useWorkbookStore = defineStore('workbook', () => {
     commandService.clear()
     clipboardManager.exitAllModes()
     useFormulaStore().setActiveSheetContext(newSheets[0].id, newSheets[0].name)
+    autoSaveSuppressed.value = true
+    persistId(workbook.value.id)
   }
 
   /**
@@ -115,6 +138,26 @@ export const useWorkbookStore = defineStore('workbook', () => {
     if (workbook.value.activeSheetId) {
       const active = workbook.value.sheets.find((s) => s.id === workbook.value.activeSheetId)
       useFormulaStore().setActiveSheetContext(workbook.value.activeSheetId, active?.name)
+    }
+    autoSaveSuppressed.value = true
+    persistId(loaded.id)
+  }
+
+  /**
+   * 启动时自动恢复上次的工作簿（登录用户）
+   * - 刷新页面后 id 稳定（localStorage），直接按 id 从后端加载
+   * - 首次访问 / 后端无此 id → 静默忽略（保留空白新表）
+   */
+  async function restoreLastWorkbook(): Promise<boolean> {
+    const id = loadPersistedId()
+    try {
+      const { loadWorkbook } = await import('@/services/workbookService')
+      const loaded = await loadWorkbook(id)
+      replaceWorkbook(loaded)
+      return true
+    } catch {
+      // 未登录（无 token 401）或 404：保持当前空白表
+      return false
     }
   }
 
@@ -377,10 +420,13 @@ export const useWorkbookStore = defineStore('workbook', () => {
   return {
     workbook,
     activeSheet,
+    autoSaveSuppressed,
     addSheet,
     setActiveSheet,
     importSheets,
     replaceWorkbook,
+    restoreLastWorkbook,
+    persistWorkbookId: persistId,
     setCellValue,
     addRows,
     pasteCells,

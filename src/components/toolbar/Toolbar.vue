@@ -39,6 +39,8 @@ async function handleSave(): Promise<void> {
   saveError.value = ''
   try {
     await saveWorkbook(workbookStore.workbook)
+    // 保存成功 → 记住工作簿 id（刷新后自动恢复用）
+    workbookStore.persistWorkbookId(workbookStore.workbook.id)
     saveState.value = 'saved'
   } catch (err) {
     saveState.value = 'error'
@@ -53,16 +55,16 @@ async function handleSave(): Promise<void> {
  *
  * 注意点：
  * 1. deep watch 才能捕获 cells Map 的增删改（Pinia 的 state 本身是响应式的）
- * 2. 加载/导入工作簿也会触发变更 → 用 skipNextAutoSave 标记跳过（加载后无需回写）
+ * 2. 加载/导入/恢复工作簿也会触发变更 → 用 autoSaveSuppressed 标记跳过（加载后无需回写）
  * 3. 保存中又发生变更 → 重置计时器，等下一轮（始终保存最新状态）
  */
-let skipNextAutoSave = false
 
 watch(
   () => workbookStore.workbook,
   () => {
-    if (skipNextAutoSave) {
-      skipNextAutoSave = false
+    // 加载/恢复/导入触发的工作簿替换 → 跳过自动保存回写
+    if (workbookStore.autoSaveSuppressed) {
+      workbookStore.autoSaveSuppressed = false
       return
     }
     // 未登录不自动保存（无 token，保存必然 401）
@@ -101,8 +103,8 @@ async function toggleOpenPanel(): Promise<void> {
 async function handleOpen(id: string): Promise<void> {
   try {
     const loaded = await loadWorkbook(id)
+    // replaceWorkbook 内部已置 autoSaveSuppressed（跳过自动保存回写）+ 持久化 id
     workbookStore.replaceWorkbook(loaded)
-    skipNextAutoSave = true // 加载触发 watch，跳过自动保存回写
     openPanelVisible.value = false
     saveState.value = 'saved'
   } catch (err) {
@@ -119,7 +121,7 @@ async function handleRename(wb: WorkbookMeta): Promise<void> {
     // 如果重命名的是当前打开的工作簿，同步 store 名称
     if (wb.id === workbookStore.workbook.id) {
       workbookStore.workbook.name = newName.trim()
-      skipNextAutoSave = true // 改名不触发保存回写（后端已改）
+      workbookStore.autoSaveSuppressed = true // 改名不触发保存回写（后端已改）
     }
     await refreshList()
   } catch (err) {
@@ -174,8 +176,8 @@ async function handleFileChange(e: Event): Promise<void> {
 
     if (result.sheets.length > 0) {
       // 多 sheet 全量导入（替换整个工作簿，等价于"打开文件"）
+      // importSheets 内部已置 autoSaveSuppressed + 持久化新 id
       workbookStore.importSheets(result.sheets)
-      skipNextAutoSave = true // 导入触发 watch，跳过自动保存回写
     }
   } catch (err) {
     console.error('导入失败:', err)

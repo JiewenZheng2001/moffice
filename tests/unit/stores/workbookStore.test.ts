@@ -30,6 +30,51 @@ function raw(store: ReturnType<typeof useWorkbookStore>, ref: string): unknown {
   return store.activeSheet?.cells.get(ref)?.rawValue ?? null
 }
 
+describe('workbookStore 工作簿 id 持久化与自动恢复', () => {
+  it('初始 id 写入 localStorage，多次实例化 id 稳定（刷新不换表）', () => {
+    localStorage.clear()
+    const store1 = freshStore()
+    const id = store1.workbook.id
+    expect(localStorage.getItem('moffice_workbook_id')).toBe(id)
+
+    // 模拟刷新：新 pinia 实例（同 localStorage）
+    const store2 = freshStore()
+    expect(store2.workbook.id).toBe(id)
+  })
+
+  it('replaceWorkbook 持久化新 id 并抑制自动保存', () => {
+    localStorage.clear()
+    const store = freshStore()
+    const loaded = {
+      id: 'wb-loaded-1',
+      name: '加载的表',
+      sheets: store.workbook.sheets,
+      activeSheetId: store.workbook.activeSheetId,
+    }
+    store.replaceWorkbook(loaded)
+    expect(store.workbook.id).toBe('wb-loaded-1')
+    expect(localStorage.getItem('moffice_workbook_id')).toBe('wb-loaded-1')
+    expect(store.autoSaveSuppressed).toBe(true)
+  })
+
+  it('restoreLastWorkbook 成功时替换当前工作簿', async () => {
+    localStorage.clear()
+    const store = freshStore()
+    // mock loadWorkbook 返回数据
+    vi.doMock('@/services/workbookService', () => ({
+      loadWorkbook: vi.fn().mockResolvedValue({
+        id: 'wb-restored',
+        name: '恢复的表',
+        sheets: [],
+        activeSheetId: '',
+      }),
+    }))
+    const ok = await store.restoreLastWorkbook()
+    expect(ok).toBe(true)
+    expect(store.workbook.id).toBe('wb-restored')
+  })
+})
+
 describe('workbookStore', () => {
   describe('基础操作', () => {
     it('初始有一个默认 Sheet', () => {

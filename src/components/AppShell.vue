@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import SpreadsheetGrid from './grid/SpreadsheetGrid.vue'
 import FormulaBar from './formula-bar/FormulaBar.vue'
 import Toolbar from './toolbar/Toolbar.vue'
@@ -8,6 +8,7 @@ import AuthBar from './auth/AuthBar.vue'
 import SheetTabs from './sheet-tabs/SheetTabs.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { gridScrollRef } from '@/composables/useGridScrollRef'
+import { useWorkbookStore } from '@/stores/workbookStore'
 import { isLoggedIn } from '@/services/authService'
 
 // 激活全局键盘导航（方向键/Tab/Enter/F2/Esc）+ 预滚动
@@ -18,6 +19,13 @@ const authed = ref(isLoggedIn())
 function onAuthChange(): void {
   authed.value = isLoggedIn()
 }
+
+// 启动时自动恢复上次的工作簿（登录用户刷新后不再丢失现场）
+onMounted(() => {
+  if (isLoggedIn()) {
+    void useWorkbookStore().restoreLastWorkbook()
+  }
+})
 </script>
 
 <template>
