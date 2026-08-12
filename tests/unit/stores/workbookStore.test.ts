@@ -528,4 +528,74 @@ describe('workbookStore', () => {
       expect(store.activeSheet!.cells.get('B1')!.computedValue).toBe(8)
     })
   })
+
+  describe('行列插入/删除与公式联动', () => {
+    it('插入行后公式字符串平移且重算（D1=A1+A2 → 插入行后 A2 下移）', () => {
+      const store = freshStore()
+      store.setCellValue('A1', 1)
+      store.setCellValue('A2', 2)
+      store.setCellValue('C1', '=A1+A2')
+      expect(store.activeSheet!.cells.get('C1')!.computedValue).toBe(3)
+
+      // 在第 1 行后插入 → A2 下移到 A3，公式变为 =A1+A3 且重算仍为 3
+      store.insertRow(0)
+      const c1 = store.activeSheet!.cells.get('C1')!
+      expect(c1.formula).toBe('=A1+A3')
+      expect(c1.computedValue).toBe(3)
+
+      // 撤销 → 公式与值恢复
+      store.undo()
+      const c1Back = store.activeSheet!.cells.get('C1')!
+      expect(c1Back.formula).toBe('=A1+A2')
+      expect(c1Back.computedValue).toBe(3)
+    })
+
+    it('插入列后公式引用平移且重算', () => {
+      const store = freshStore()
+      store.setCellValue('A1', 1)
+      store.setCellValue('B1', 2)
+      store.setCellValue('C1', '=A1+B1')
+      expect(store.activeSheet!.cells.get('C1')!.computedValue).toBe(3)
+
+      // B 列后插入（fromCol=2）→ 公式格 C1 → D1；B1 在插入点之前不动
+      store.insertColumn(1)
+      const d1 = store.activeSheet!.cells.get('D1')!
+      expect(d1.formula).toBe('=A1+B1')
+      expect(d1.computedValue).toBe(3)
+
+      store.undo()
+      const c1 = store.activeSheet!.cells.get('C1')!
+      expect(c1.formula).toBe('=A1+B1')
+    })
+
+    it('插入列后公式引用列号平移（引用插入点之后的列）', () => {
+      const store = freshStore()
+      store.setCellValue('A1', 1)
+      store.setCellValue('B1', 2)
+      store.setCellValue('C1', '=A1+C1') // 自引用公式（仅测试平移，不测值）
+
+      // 在 A 列后插入（fromCol=1）→ C1 引用 B1、C1 都越过插入点
+      store.insertColumn(0)
+      const d1 = store.activeSheet!.cells.get('D1')!
+      expect(d1.formula).toBe('=A1+D1')
+    })
+
+    it('删除行后公式重算（引用被删行 → 空单元格 → 值变化）', () => {
+      const store = freshStore()
+      store.setCellValue('A1', 1)
+      store.setCellValue('A2', 2)
+      store.setCellValue('C1', '=A1+A2')
+      expect(store.activeSheet!.cells.get('C1')!.computedValue).toBe(3)
+
+      // 删除第 2 行 → A2 被删（引用保持 =A1+A2，空单元格算 0）→ 重算 = 1
+      store.deleteRow(1)
+      const c1 = store.activeSheet!.cells.get('C1')!
+      expect(c1.formula).toBe('=A1+A2')
+      expect(c1.computedValue).toBe(1)
+
+      // 撤销 → 数据与公式恢复，重算 = 3
+      store.undo()
+      expect(store.activeSheet!.cells.get('C1')!.computedValue).toBe(3)
+    })
+  })
 })

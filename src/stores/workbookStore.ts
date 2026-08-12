@@ -396,6 +396,9 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const sheet = activeSheet.value
     if (!sheet || afterRow < 0 || afterRow >= sheet.rowCount) return
     commandService.execute(new InsertRowCommand(sheet, afterRow))
+    // 行移动会平移公式字符串（Excel 语义），但 computedValue 是旧缓存 →
+    // 全量重算所有 sheet 的公式（行列操作低频，全量可接受）
+    recalcAll()
   }
 
   /** 删除指定行 */
@@ -403,6 +406,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const sheet = activeSheet.value
     if (!sheet || rowIndex < 0 || rowIndex >= sheet.rowCount || sheet.rowCount <= 1) return
     commandService.execute(new DeleteRowCommand(sheet, rowIndex))
+    recalcAll()
   }
 
   /** 在指定位置后插入一列 */
@@ -410,6 +414,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const sheet = activeSheet.value
     if (!sheet || afterCol < 0 || afterCol >= sheet.columnCount) return
     commandService.execute(new InsertColumnCommand(sheet, afterCol))
+    recalcAll()
   }
 
   /** 删除指定列 */
@@ -417,6 +422,27 @@ export const useWorkbookStore = defineStore('workbook', () => {
     const sheet = activeSheet.value
     if (!sheet || colIndex < 0 || colIndex >= sheet.columnCount || sheet.columnCount <= 1) return
     commandService.execute(new DeleteColumnCommand(sheet, colIndex))
+    recalcAll()
+  }
+
+  /**
+   * 全量重算所有 sheet 的公式（行列插入/删除后调用）
+   * 为什么需要：行列命令移动单元格时平移了公式字符串，
+   * 但 computedValue 与依赖图还是旧位置的 —— 必须整体重算。
+   * 行列操作是低频动作，O(全部公式数) 完全可接受。
+   */
+  function recalcAll(): void {
+    const formulaStore = useFormulaStore()
+    for (const targetSheet of workbook.value.sheets) {
+      for (const [ref, cell] of targetSheet.cells) {
+        if (cell.formula) {
+          const r = formulaStore.compute(cell.formula, targetSheet, workbook.value)
+          cell.computedValue = r.value
+          cell.error = typeof r.value === 'string' && r.value.startsWith('#') ? r.value : null
+          formulaStore.setDeps(ref, r.deps)
+        }
+      }
+    }
   }
 
   /**

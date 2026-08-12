@@ -41,6 +41,19 @@ function read(sheet: Sheet, ref: string): unknown {
   return sheet.cells.get(ref)?.rawValue ?? null
 }
 
+/** 便捷：写入公式格（formula + rawValue 都是公式串） */
+function setFormula(sheet: Sheet, ref: string, formula: string): void {
+  const cell = createCell(ref)
+  cell.rawValue = formula
+  cell.formula = formula
+  sheet.cells.set(ref, cell)
+}
+
+/** 便捷：读取单元格公式 */
+function formula(sheet: Sheet, ref: string): string | null {
+  return sheet.cells.get(ref)?.formula ?? null
+}
+
 describe('SetCellCommand', () => {
   let sheet: Sheet
   beforeEach(() => { sheet = createSheet() })
@@ -357,6 +370,56 @@ describe('InsertRowCommand / DeleteRowCommand', () => {
     new DeleteRowCommand(sheet, 0).execute()
     expect(sheet.rowCount).toBe(9)
   })
+
+  it('插入行后公式引用行号平移（Excel 语义）', () => {
+    // 公式格 D3（插入点之上，位置不动）引用 A5（插入点之下，+1）
+    setRaw(sheet, 'A2', 1)
+    setRaw(sheet, 'A5', 5)
+    setFormula(sheet, 'D3', '=A2+A5')
+    const cmd = new InsertRowCommand(sheet, 2) // 在第 3 行后插入（0-based 2，fromRow=3）
+    cmd.execute()
+    // 公式格位置不变，但引用 A2 不动（插入点之上）、A5 → A6
+    expect(formula(sheet, 'D3')).toBe('=A2+A6')
+    // undo 时公式反向平移回 A5
+    cmd.undo()
+    expect(formula(sheet, 'D3')).toBe('=A2+A5')
+  })
+
+  it('插入行后公式格本身也下移且引用平移', () => {
+    setFormula(sheet, 'D5', '=A2+A5')
+    const cmd = new InsertRowCommand(sheet, 2) // fromRow=3
+    cmd.execute()
+    // D5（row 4 >= 3）→ D6，公式 A5 → A6
+    expect(formula(sheet, 'D6')).toBe('=A2+A6')
+    cmd.undo()
+    expect(formula(sheet, 'D5')).toBe('=A2+A5')
+  })
+
+  it('插入行后绝对引用与混合引用规则', () => {
+    setFormula(sheet, 'B2', '=$A$5+$A2+A$5+A2')
+    const cmd = new InsertRowCommand(sheet, 0) // 第 1 行后插入（0-based 0）
+    cmd.execute()
+    // 相对行 2 → 3（受影响）；绝对行 $5 不动；行绝对 A$5 不动
+    expect(formula(sheet, 'B3')).toBe('=$A$5+$A3+A$5+A3')
+  })
+
+  it('删除行后公式引用行号反向平移', () => {
+    setFormula(sheet, 'D4', '=A3+A6')
+    const cmd = new DeleteRowCommand(sheet, 1) // 删除第 2 行（fromRow=2）
+    cmd.execute()
+    // 公式格 D4 → D3；A3（越过删除位置）→ A2；A6 → A5
+    expect(formula(sheet, 'D3')).toBe('=A2+A5')
+    cmd.undo()
+    expect(formula(sheet, 'D4')).toBe('=A3+A6')
+  })
+
+  it('插入行不平移跨 sheet 引用', () => {
+    setFormula(sheet, 'B2', '=Sheet2!A5+A5')
+    const cmd = new InsertRowCommand(sheet, 0) // 第 1 行后插入（fromRow=1）
+    cmd.execute()
+    // 公式格 B2 → B3；跨 sheet 的 Sheet2!A5 不动；当前 sheet 的 A5 → A6
+    expect(formula(sheet, 'B3')).toBe('=Sheet2!A5+A6')
+  })
 })
 
 describe('InsertColumnCommand / DeleteColumnCommand', () => {
@@ -390,6 +453,33 @@ describe('InsertColumnCommand / DeleteColumnCommand', () => {
     expect(read(sheet, 'B1')).toBe('v')
     cmd.undo()
     expect(read(sheet, 'C1')).toBe('v')
+  })
+
+  it('插入列后公式引用列号平移（插入点之后的列）', () => {
+    setFormula(sheet, 'D2', '=A2+C2')
+    const cmd = new InsertColumnCommand(sheet, 1) // B 列后插入（0-based 1，新列 = C）
+    cmd.execute()
+    // 公式格 D2 → E2；A2 不动（插入点之前）、C2 → D2（越过插入点）
+    expect(formula(sheet, 'E2')).toBe('=A2+D2')
+    cmd.undo()
+    expect(formula(sheet, 'D2')).toBe('=A2+C2')
+  })
+
+  it('插入列后插入点之前的引用不动', () => {
+    setFormula(sheet, 'D2', '=A2+B2')
+    new InsertColumnCommand(sheet, 1).execute()
+    // A2/B2 都在插入点之前 → 公式原样
+    expect(formula(sheet, 'E2')).toBe('=A2+B2')
+  })
+
+  it('删除列后公式引用列号反向平移（被删列保持，简化不生成 #REF!）', () => {
+    setFormula(sheet, 'D2', '=B2+C2')
+    const cmd = new DeleteColumnCommand(sheet, 1) // 删除 B 列
+    cmd.execute()
+    // 公式格 D2 → C2；C2 → B2；B2（被删列）保持
+    expect(formula(sheet, 'C2')).toBe('=B2+B2')
+    cmd.undo()
+    expect(formula(sheet, 'D2')).toBe('=B2+C2')
   })
 })
 

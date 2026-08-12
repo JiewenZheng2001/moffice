@@ -1,6 +1,7 @@
 import type { CellFormat, CellRef, CellValue, Sheet } from './types'
 import { createCell } from './cell'
 import { colToIndex, toCellRef } from '@/utils/columnUtils'
+import { shiftFormulaRefsPartial } from './formulaShift'
 
 // ═══════════════════════════════════════════════
 // 命令模式 — 所有修改 Workbook 数据的操作必须封装为 Command
@@ -472,6 +473,13 @@ export class DeleteRowCommand implements ICommand {
   private rowIndex: number
   /** 被删除行中的所有单元格快照 */
   private deletedCells: { ref: CellRef; value: CellValue; formula: string | null }[] = []
+  /**
+   * 删除前所有公式格的快照（undo 时恢复）。
+   * 为什么需要：execute 会平移公式引用，但平移不可逆（如 =B2+C2 删除 B 列
+   * 后变 =B2+B2，无法区分哪个 B2 原本是 C2）→ undo 时数据移动跳过公式平移，
+   * 直接按快照恢复原字符串，保证 Ctrl+Z 完全还原
+   */
+  private formulaSnapshot: { ref: CellRef; formula: string }[] = []
 
   constructor(sheet: Sheet, rowIndex: number) {
     this.sheet = sheet
@@ -489,6 +497,10 @@ export class DeleteRowCommand implements ICommand {
         })
       }
     }
+    // 快照所有公式格
+    for (const [ref, cell] of sheet.cells) {
+      if (cell.formula) this.formulaSnapshot.push({ ref, formula: cell.formula })
+    }
   }
 
   execute(): void {
@@ -501,9 +513,14 @@ export class DeleteRowCommand implements ICommand {
   }
 
   undo(): void {
-    // 恢复删除的行：下方行先下移
+    // 恢复删除的行：下方行先下移（数据移动，公式不平移——由快照恢复）
     this.sheet.rowCount++
-    shiftRows(this.sheet, this.rowIndex, 1)
+    shiftRows(this.sheet, this.rowIndex, 1, false)
+    // 恢复公式原字符串（避免 execute 的平移不可逆导致双重平移）
+    for (const { ref, formula } of this.formulaSnapshot) {
+      const cell = this.sheet.cells.get(ref)
+      if (cell) cell.formula = formula
+    }
     // 恢复被删除的单元格内容
     for (const { ref, value, formula } of this.deletedCells) {
       const cell = createCell(ref)
@@ -560,6 +577,8 @@ export class DeleteColumnCommand implements ICommand {
   private sheet: Sheet
   private colIndex: number
   private deletedCells: { ref: CellRef; value: CellValue; formula: string | null }[] = []
+  /** 删除前所有公式格快照（undo 恢复，对称于 DeleteRowCommand） */
+  private formulaSnapshot: { ref: CellRef; formula: string }[] = []
 
   constructor(sheet: Sheet, colIndex: number) {
     this.sheet = sheet
@@ -576,6 +595,10 @@ export class DeleteColumnCommand implements ICommand {
         })
       }
     }
+    // 快照所有公式格
+    for (const [ref, cell] of sheet.cells) {
+      if (cell.formula) this.formulaSnapshot.push({ ref, formula: cell.formula })
+    }
   }
 
   execute(): void {
@@ -589,7 +612,13 @@ export class DeleteColumnCommand implements ICommand {
 
   undo(): void {
     this.sheet.columnCount++
-    shiftColumns(this.sheet, this.colIndex, 1)
+    // 数据右移（公式不平移——由快照恢复）
+    shiftColumns(this.sheet, this.colIndex, 1, false)
+    // 恢复公式原字符串
+    for (const { ref, formula } of this.formulaSnapshot) {
+      const cell = this.sheet.cells.get(ref)
+      if (cell) cell.formula = formula
+    }
     for (const { ref, value, formula } of this.deletedCells) {
       const cell = createCell(ref)
       cell.rawValue = value
@@ -607,8 +636,11 @@ export class DeleteColumnCommand implements ICommand {
 // 行列位移辅助函数（纯函数，不引入副作用）
 // ═══════════════════════════════════════════════
 
-/** 从 fromRow 起，所有行 +delta（delta 可正可负） */
-function shiftRows(sheet: Sheet, fromRow: number, delta: number): void {
+/** 从 fromRow 起，所有行 +delta（delta 可正可负）
+ * @param shiftFormulas 是否平移公式引用（Delete 命令 undo 时传 false，
+ *                      由公式快照恢复，避免双重平移）
+ */
+function shiftRows(sheet: Sheet, fromRow: number, delta: number, shiftFormulas = true): void {
   const affected: { oldRef: CellRef; cell: ReturnType<typeof createCell> }[] = []
   for (const [ref, cell] of sheet.cells) {
     const m = ref.match(/^([A-Z]+)(\d+)$/i)
@@ -626,15 +658,23 @@ function shiftRows(sheet: Sheet, fromRow: number, delta: number): void {
     const col = colToIndex(m[1].toUpperCase())
     const newRow = parseInt(m[2], 10) - 1 + delta
     if (newRow >= 0 && newRow < sheet.rowCount) {
-      const newRef = toCellRef(newRow, col)
-      cell.id = newRef
-      sheet.cells.set(newRef, cell)
+      cell.id = toCellRef(newRow, col)
+      sheet.cells.set(cell.id, cell)
+    }
+  }
+  if (!shiftFormulas) return
+  // 引用平移作用于 sheet 上【所有】公式格，包括位置未移动的：
+  // Excel 中插入/删除行，任何位置的公式引用行号都会调整（如 C1 引用 A2，
+  // 在 A 行上方插行后 C1 不动但引用变 A3）
+  for (const cell of sheet.cells.values()) {
+    if (cell.formula) {
+      cell.formula = shiftFormulaRefsPartial(cell.formula, fromRow, delta, 0, 0)
     }
   }
 }
 
 /** 从 fromCol 起，所有列 +delta */
-function shiftColumns(sheet: Sheet, fromCol: number, delta: number): void {
+function shiftColumns(sheet: Sheet, fromCol: number, delta: number, shiftFormulas = true): void {
   const affected: { oldRef: CellRef; cell: ReturnType<typeof createCell> }[] = []
   for (const [ref, cell] of sheet.cells) {
     const m = ref.match(/^([A-Z]+)(\d+)$/i)
@@ -652,9 +692,15 @@ function shiftColumns(sheet: Sheet, fromCol: number, delta: number): void {
     const row = parseInt(m[2], 10) - 1
     const newCol = colToIndex(m[1].toUpperCase()) + delta
     if (newCol >= 0 && newCol < sheet.columnCount) {
-      const newRef = toCellRef(row, newCol)
-      cell.id = newRef
-      sheet.cells.set(newRef, cell)
+      cell.id = toCellRef(row, newCol)
+      sheet.cells.set(cell.id, cell)
+    }
+  }
+  if (!shiftFormulas) return
+  // 对称于 shiftRows：所有公式格的列引用都平移
+  for (const cell of sheet.cells.values()) {
+    if (cell.formula) {
+      cell.formula = shiftFormulaRefsPartial(cell.formula, 0, 0, fromCol, delta)
     }
   }
 }
