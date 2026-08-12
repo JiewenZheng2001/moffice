@@ -74,13 +74,13 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
   }
 
   async function handleKeydown(e: KeyboardEvent): Promise<void> {
+    // 如果焦点在任何输入框内（公式栏/编辑框），多数快捷键让浏览器原生处理
+    const isInputFocused = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA'
+
     // ---- 剪贴板快捷键（编辑模式和非编辑模式均生效） ----
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       const sheet = workbookStore.activeSheet
       if (!sheet) return
-
-      // 如果焦点在任何输入框内，让浏览器原生处理剪贴板
-      const isInputFocused = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA'
 
       if (e.key === 'c' || e.key === 'C') {
         if (isInputFocused) return
@@ -195,7 +195,7 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
     }
 
     // 如果事件来自输入框（编辑中），不处理方向键等导航 — 但允许 Tab/Enter/Escape 穿透
-    if ((e.target as HTMLElement)?.tagName === 'INPUT') {
+    if (isInputFocused) {
       if (e.key !== 'Tab' && e.key !== 'Enter' && e.key !== 'Escape') return
     }
 
@@ -207,6 +207,18 @@ export function useKeyboard(scrollContainer: Ref<HTMLElement | null>): void {
 
     // ---- 导航键（选择模式下移动） ----
     if (!uiStore.isEditing) {
+      // Excel type-to-edit：直接输入可打印字符 → 进入编辑模式并替换原内容
+      // （排除 Ctrl/Meta/Alt 组合与多字符键；' ' 空格也算可打印）
+      if (
+        !e.ctrlKey && !e.metaKey && !e.altKey
+        && e.key.length === 1
+        && !isInputFocused
+      ) {
+        e.preventDefault()
+        uiStore.startEdit(e.key)
+        return
+      }
+
       switch (e.key) {
         case 'ArrowUp':
           e.preventDefault()

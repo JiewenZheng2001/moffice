@@ -15,6 +15,8 @@ export const useUiStore = defineStore('ui', () => {
   const selection = ref<CellRange | null>(null)
   const isEditing = ref(false)
   const isDragging = ref(false)
+  /** 直接键盘输入时的初始编辑内容（type-to-edit 用，用完即清） */
+  const editInitialValue = ref<string | null>(null)
 
   // ---- 剪贴板状态（委托给 ClipboardManager，这里只暴露只读视图） ----
 
@@ -119,12 +121,27 @@ export const useUiStore = defineStore('ui', () => {
     return c.row >= minRow && c.row <= maxRow && c.col >= minCol && c.col <= maxCol
   }
 
-  function startEdit(): void {
+  /**
+   * 进入编辑模式
+   * @param initialValue 可选：编辑器的初始内容。
+   *   - 传值 = 直接键盘输入（Excel type-to-edit，替换原内容）
+   *   - 不传 = F2/双击（保留原内容，光标在末尾）
+   */
+  function startEdit(initialValue?: string): void {
     isEditing.value = true
+    editInitialValue.value = initialValue ?? null
     // 编辑操作结束所有虚线框模式
     clipboardManager.exitAllModes()
   }
-  function cancelEdit(): void { isEditing.value = false }
+  function cancelEdit(): void {
+    isEditing.value = false
+    editInitialValue.value = null
+  }
+
+  /** 消费初始编辑值（SpreadsheetGrid 读取后清空） */
+  function consumeEditInitialValue(): void {
+    editInitialValue.value = null
+  }
 
   function startResize(type: 'col' | 'row', index: number, startX: number, startY: number, startSize: number): void {
     resizeState.value = { type, index, startX, startY, startSize }
@@ -184,9 +201,9 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   return {
-    activeRef, selection, isEditing, isDragging,
+    activeRef, selection, isEditing, isDragging, editInitialValue,
     selectCell, startRangeSelection, extendSelection, finishSelection,
-    isInSelection, startEdit, cancelEdit, getSelectionRange,
+    isInSelection, startEdit, cancelEdit, consumeEditInitialValue, getSelectionRange,
     resizeState, startResize, updateResize, finishResize,
     cutRange, copyRange,
     setCutRange, setCopyRange, clearCutRange, clearCopyRange, clearAllRanges,

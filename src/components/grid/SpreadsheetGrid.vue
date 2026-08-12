@@ -345,19 +345,31 @@ function displayText(cell: { error: string | null; computedValue: unknown; forma
 }
 
 /**
- * 当通过键盘（F2/Enter）进入编辑模式时，
+ * 当通过键盘（F2 / 直接输入）进入编辑模式时，
  * editCellRef 可能还未设置 → 自动同步为当前选区
  * 并聚焦输入框（双击路径在 handleCellDblClick 中已聚焦）
  */
 watch(
   () => uiStore.isEditing,
   async (editing) => {
+    // 任何路径退出编辑（Esc/Tab/失焦/提交）都清空 editCellRef，
+    // 保证下一次进入编辑时 watch 条件 `!editCellRef.value` 成立。
+    // 否则会出现：编辑 → Esc（仅 uiStore.cancelEdit）→ 再输入字符 → watch 被跳过 → 编辑框残留旧值
+    if (!editing) {
+      editCellRef.value = null
+      return
+    }
     if (editing && !editCellRef.value) {
       const ref = uiStore.activeRef
       editCellRef.value = ref
       const sheet = workbookStore.activeSheet
       const cell = sheet?.cells?.get(ref)
-      editValue.value = cell?.formula ?? String(cell?.rawValue ?? '')
+      // 直接键盘输入（type-to-edit）：初始内容为输入字符，替换原值
+      // F2 / 双击：保留原内容
+      editValue.value = uiStore.editInitialValue
+        ?? cell?.formula
+        ?? String(cell?.rawValue ?? '')
+      uiStore.consumeEditInitialValue()
       // 等 Vue 渲染出 input 后再聚焦，确保键盘输入直接进入编辑器
       await nextTick()
       const input = document.querySelector('.cell-input') as HTMLInputElement | null

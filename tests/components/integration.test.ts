@@ -208,4 +208,49 @@ describe('集成：键盘剪贴板全链路', () => {
     await press('z', { ctrl: true })
     expect(raw('A1')).toBeNull()
   })
+
+  it('type-to-edit：单击选中后直接输入字符进入编辑（Excel 行为）', async () => {
+    const store = useWorkbookStore()
+    const ui = useUiStore()
+    store.setCellValue('A1', '旧值')
+    ui.selectCell('A1')
+
+    // 单击选中后直接按单字符键 → 立即进入编辑，编辑框内容为该字符（替换语义）
+    await press('h')
+    expect(ui.isEditing).toBe(true)
+    // editInitialValue 会被 SpreadsheetGrid 的 watch 消费写入编辑框
+    const input = wrapper.find('.cell-input')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('h')
+
+    // 输入 = 开头 → 编辑框内容以 = 开头（公式输入路径）
+    await press('Escape')
+    expect(ui.isEditing).toBe(false)
+    await press('=')
+    expect(ui.isEditing).toBe(true)
+    expect((wrapper.find('.cell-input').element as HTMLInputElement).value).toBe('=')
+  })
+
+  it('type-to-edit 不干扰 Ctrl 快捷键与功能键', async () => {
+    const store = useWorkbookStore()
+    const ui = useUiStore()
+    store.setCellValue('A1', 'x')
+    ui.selectCell('A1')
+
+    // Ctrl+C 仍是复制，不进入编辑
+    await press('c', { ctrl: true })
+    expect(ui.isEditing).toBe(false)
+    expect(clipboardManager.isCopyMode).toBe(true)
+
+    // 功能键不进入编辑
+    await press('F2')
+    expect(ui.isEditing).toBe(true) // F2 = 编辑当前单元格
+    await press('Escape')
+    expect(ui.isEditing).toBe(false)
+
+    // 方向键导航不进入编辑
+    await press('ArrowDown')
+    expect(ui.isEditing).toBe(false)
+    expect(ui.activeRef).toBe('A2')
+  })
 })
