@@ -175,6 +175,20 @@ export const useWorkbookStore = defineStore('workbook', () => {
   }
 
   /**
+   * 退出登录时重置工作簿（数据隔离）
+   *
+   * 为什么登出必须重置：
+   * - 登出 = 会话结束。内存中的表格属于上一个用户，
+   *   若不清理，下一位使用同一浏览器的用户会直接看到/导出上一份数据（隐私问题）
+   * - 复用 newWorkbook 语义：生成新 id 并持久化，
+   *   保证登出后的本地编辑写入新记录，绝不会覆盖旧用户已保存的云端数据
+   * - 云端数据不受影响：按账号存在后端，重新登录后可从工具栏"打开"列表恢复
+   */
+  function resetForLogout(): void {
+    newWorkbook()
+  }
+
+  /**
    * 启动时自动恢复上次的工作簿（登录用户）
    * - 刷新页面后 id 稳定（localStorage），直接按 id 从后端加载
    * - 首次访问 / 后端无此 id → 静默忽略（保留空白新表）
@@ -510,6 +524,7 @@ export const useWorkbookStore = defineStore('workbook', () => {
     restoreLastWorkbook,
     persistWorkbookId: persistId,
     newWorkbook,
+    resetForLogout,
     setCellValue,
     addRows,
     pasteCells,

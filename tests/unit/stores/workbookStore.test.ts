@@ -72,6 +72,30 @@ describe('workbookStore 工作簿 id 持久化与自动恢复', () => {
     expect(commandService.canUndo).toBe(false) // 命令栈清空
   })
 
+  it('resetForLogout：登出重置为空白工作簿（数据隔离）', () => {
+    localStorage.clear()
+    const store = freshStore()
+    const oldId = store.workbook.id
+    store.setCellValue('A1', '机密数据')
+    store.setCellValue('B2', 42)
+    store.undo() // 让命令栈里有记录
+    store.redo()
+
+    store.resetForLogout()
+
+    // 换新 id 且持久化（后续编辑写入新记录，不覆盖旧用户云端数据）
+    expect(store.workbook.id).not.toBe(oldId)
+    expect(localStorage.getItem('moffice_workbook_id')).toBe(store.workbook.id)
+    // 空白单表
+    expect(store.workbook.sheets).toHaveLength(1)
+    expect(store.workbook.sheets[0].cells.size).toBe(0)
+    // 命令栈已清空：撤销/重做都不能恢复旧数据
+    store.undo()
+    expect(store.workbook.sheets[0].cells.size).toBe(0)
+    store.redo()
+    expect(store.workbook.sheets[0].cells.size).toBe(0)
+  })
+
   it('restoreLastWorkbook 成功时替换当前工作簿', async () => {
     localStorage.clear()
     const store = freshStore()

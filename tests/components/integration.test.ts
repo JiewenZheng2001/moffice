@@ -253,4 +253,31 @@ describe('集成：键盘剪贴板全链路', () => {
     expect(ui.isEditing).toBe(false)
     expect(ui.activeRef).toBe('A2')
   })
+
+  it('退出登录 → 工作簿重置为空白（数据隔离，下一位用户看不到上一份数据）', async () => {
+    const store = useWorkbookStore()
+    // 先写入"上一个用户"的数据
+    store.setCellValue('A1', '机密数据')
+    const oldId = store.workbook.id
+
+    // 模拟已登录：localStorage 有 token + 用户名 → 重新挂载让 AuthBar 显示退出按钮
+    localStorage.setItem('moffice_token', 'fake-token')
+    localStorage.setItem('moffice_username', 'tester')
+    wrapper.unmount()
+    wrapper = mount(AppShell)
+    await flushPromises()
+
+    // 点击"退出"按钮
+    const logoutBtn = wrapper.findAll('button').find((b) => b.text().includes('退出'))
+    expect(logoutBtn).toBeTruthy()
+    await logoutBtn!.trigger('click')
+    await flushPromises()
+
+    // 登出后：新 id + 空白单表 + 命令栈清空（撤销无法恢复旧数据）
+    expect(store.workbook.id).not.toBe(oldId)
+    expect(store.workbook.sheets).toHaveLength(1)
+    expect(store.activeSheet!.cells.size).toBe(0)
+    store.undo()
+    expect(store.activeSheet!.cells.size).toBe(0)
+  })
 })

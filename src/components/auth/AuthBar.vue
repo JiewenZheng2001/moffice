@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { login, register, logout, getUsername, AuthError } from '@/services/authService'
+import { useWorkbookStore } from '@/stores/workbookStore'
 
 const emit = defineEmits<{
   (e: 'authed'): void
@@ -40,6 +41,8 @@ async function onSubmit(): Promise<void> {
 function onLogout(): void {
   logout()
   username.value = null
+  // 登出 = 会话结束 → 重置工作簿为空白（数据隔离，防止下一位用户看到/导出上一份数据）
+  useWorkbookStore().resetForLogout()
   emit('authed')
 }
 </script>
