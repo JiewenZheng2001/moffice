@@ -1,0 +1,30 @@
+# Cloudflare Workers 部署配置
+# 用法：
+#   cd workers
+#   pnpm install          # 安装依赖（hono）
+#   npx wrangler login    # 登录（免费，无需信用卡）
+#   npx wrangler deploy   # 部署
+#
+# 部署后得到域名：https://moffice-api.<your-subdomain>.workers.dev
+# 前端 VITE_API_BASE 指向该域名
+name = "moffice-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# 环境变量（本地开发占位；生产在 Dashboard → Settings → Variables 覆盖）
+# ⚠️ 生产必须设置真实 JWT_SECRET（随机长字符串），否则所有 token 共用 dev 密钥
+[vars]
+JWT_SECRET = "dev-only-secret-change-in-production"
+CORS_ORIGIN = ""
+
+# D1 数据库（SQLite 兼容，免费 5GB）
+# database_id: 运行 `npx wrangler d1 create moffice` 后填入真实 ID；
+# 本地开发可用任意 UUID 占位（wrangler dev 用本地模拟）
+[[d1_databases]]
+binding = "DB"
+database_name = "moffice"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# 环境变量（部署后在 Cloudflare Dashboard → Workers → moffice-api → Settings → Variables 设置）
+# JWT_SECRET: 必填，随机长字符串
+# CORS_ORIGIN: 前端域名，逗号分隔（如 https://moffice-seven.vercel.app）

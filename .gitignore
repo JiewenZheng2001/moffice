@@ -79,3 +79,4 @@ pnpm-lock.yaml
 temp/
 tmp/
 
+.vercel
