@@ -43,11 +43,37 @@ model/        数据模型（纯 TS，零依赖）：Cell / Sheet / Workbook / C
 ```bash
 pnpm install        # 安装依赖
 pnpm dev            # 开发服务器 → http://localhost:5173
-pnpm test           # 运行全部测试（270 个）
+pnpm test           # 运行全部测试（310 个）
 pnpm test:coverage  # 覆盖率报告
 pnpm build          # 生产构建
 pnpm typecheck      # 类型检查
+
+# 可选：本地启动后端（保存/加载/登录需要）
+cd server && pnpm install && pnpm dev   # API → http://localhost:3000
 ```
+
+开发模式下前端通过 Vite proxy 访问后端（`/api` → `localhost:3000`），无需额外配置。
+
+## 🌐 部署
+
+纯静态前端（Vercel / GitHub Pages）+ 独立后端 API（Render / Railway），代码已包含部署配置：
+
+```
+GitHub 仓库
+  ├─ 前端 SPA → Vercel（vercel.json 已配置 Vite + SPA 回退）
+  └─ 后端 API → Render（render.yaml 蓝图：免费层 + SQLite 磁盘持久化）
+```
+
+**环境变量**（详见 `.env.example`）：
+
+| 位置 | 变量 | 说明 |
+|------|------|------|
+| 前端构建 | `VITE_API_BASE` | 后端地址，如 `https://moffice-api.onrender.com`；留空则走 Vite proxy（开发） |
+| 后端 | `CORS_ORIGIN` | 允许的前端域名（逗号分隔多域名） |
+| 后端 | `JWT_SECRET` | JWT 签名密钥，部署后必须手动设置（否则重启 token 失效） |
+| 后端 | `PORT` | 端口（Render 自动注入） |
+
+后端使用 Node 内置 `node:sqlite`，数据落在 `/app/data/moffice.db`（Render 已挂 1GB 持久磁盘，重启不丢数据）。
 
 ## ⌨️ 快捷键
 
@@ -63,30 +89,39 @@ pnpm typecheck      # 类型检查
 
 ## 🧪 测试
 
-**270 个测试用例全部通过**（Vitest）：
+**310 个测试用例全部通过**（Vitest）：
 
 | 模块 | 数量 | 说明 |
 |------|------|------|
-| 公式引擎 | 115 | Lexer / Parser / Evaluator / Dependency，**分支覆盖 96.9%，函数覆盖 100%** |
-| 命令模式 | 46 | 全部命令 execute / undo + 双栈管理 |
-| Stores | 53 | 公式传播、撤销重算、多 Sheet 依赖隔离、选区模型 |
+| 公式引擎 | 129 | Lexer / Parser / Evaluator / Dependency + 跨 Sheet 引用，**分支覆盖 96.9%，函数覆盖 100%** |
+| 命令模式 | 51 | 全部命令 execute / undo + 双栈管理 + 连续格式合并 |
+| Stores | 61 | 公式传播、撤销重算、多 Sheet 依赖隔离、跨 Sheet 联动、选区模型 |
 | 剪贴板 | 20 | ClipboardManager 状态机 + TSV 工具 |
-| 组件 | 26 | 网格渲染、格式工具栏、Sheet 标签 |
+| 组件 | 30 | 网格渲染、格式工具栏（含格式刷）、Sheet 标签 |
 | 集成 | 10 | 真实 keydown 事件驱动：复制→粘贴→撤销→重做全链路 |
+| 序列化 / 自动保存 | 9 | Map 往返转换、debounce 自动保存（fake timers） |
 
-测试驱动发现并修复了 6 个真实 bug（绝对引用丢失、循环引用检测被忽略、粘贴误退复制模式等）。
+测试驱动发现并修复了 8 个真实 bug（绝对引用丢失、循环引用检测被忽略、粘贴误退复制模式、跨 sheet 同毫秒 id 冲突等）。
 
 ## 📁 项目结构
 
 ```
 src/
-├── engine/        # 公式引擎（tokenize → parse → evaluate + 依赖图）
-├── model/         # 数据模型 + 命令定义（零依赖）
-├── stores/        # Pinia Stores
-├── services/      # 命令调度 / 剪贴板状态机 / 导入导出
+├── engine/        # 公式引擎（tokenize → parse → evaluate + 依赖图，含跨 Sheet）
+├── model/         # 数据模型 + 命令定义 + 序列化（零依赖）
+├── stores/        # Pinia Stores（workbook / ui / formula）
+├── services/      # 命令调度 / 剪贴板状态机 / 导入导出 / 后端 API
 ├── composables/   # 虚拟滚动 / 键盘导航
-├── components/    # UI 组件
+├── components/    # UI 组件（网格 / 工具栏 / 公式栏 / 登录栏）
 └── workers/       # 公式求值 Worker
+
+server/
+├── src/
+│   ├── index.ts   # Express 路由（REST + 鉴权中间件）
+│   ├── db.ts      # node:sqlite（users / workbooks 表 + 迁移）
+│   └── auth.ts    # scrypt 哈希 + 手写 JWT
+├── Dockerfile     # 容器镜像
+└── render.yaml    # Render 蓝图（含 SQLite 持久磁盘）
 ```
 
 ## 📄 License
